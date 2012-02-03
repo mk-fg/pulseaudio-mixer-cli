@@ -36,31 +36,31 @@ mind), do a "chmod +x" on it, run.
 Operation
 --------------------
 
-usage: pulseaudio-mixer-cli.py [-h] [-l MAX_LEVEL] [-s SINK_NAME]
-                               [--list-sinks] [-i] [-a ADJUST_STEP] [--debug]
-                               [level]
+    usage: pulseaudio-mixer-cli.py [-h] [-l MAX_LEVEL] [-s SINK_NAME]
+                                   [--list-sinks] [-i] [-a ADJUST_STEP] [--debug]
+                                   [level]
 
-Pulseaudio sound level control tool.
+    Pulseaudio sound level control tool.
 
-positional arguments:
-  level                 Set (just number in range of 0-100) or adjust (+/-
-                        number), followed by optional % sign.
+    positional arguments:
+      level                 Set (just number in range of 0-100) or adjust (+/-
+                            number), followed by optional % sign.
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -l MAX_LEVEL, --max-level MAX_LEVEL
-                        Value to treat as max (default: 65536).
-  -s SINK_NAME, --sink-name SINK_NAME
-                        Exact name of the sink to apply adjustments to (as
-                        printed by --list-sinks, first available sink is used
-                        by default).
-  --list-sinks          Show the list of sinks, registered in pa.
-  -i, --interactive     Adjust per-client volume levels via curses interface.
-                        Implied if no other action is specified.
-  -a ADJUST_STEP, --adjust-step ADJUST_STEP
-                        Adjustment for a single keypress in interactive mode
-                        (0-100%, default: 10%).
-  --debug               Verbose operation mode.
+    optional arguments:
+      -h, --help            show this help message and exit
+      -l MAX_LEVEL, --max-level MAX_LEVEL
+                            Value to treat as max (default: 65536).
+      -s SINK_NAME, --sink-name SINK_NAME
+                            Exact name of the sink to apply adjustments to (as
+                            printed by --list-sinks, first available sink is used
+                            by default).
+      --list-sinks          Show the list of sinks, registered in pa.
+      -i, --interactive     Adjust per-client volume levels via curses interface.
+                            Implied if no other action is specified.
+      -a ADJUST_STEP, --adjust-step ADJUST_STEP
+                            Adjustment for a single keypress in interactive mode
+                            (0-100%, default: 10%).
+      --debug               Verbose operation mode.
 
 
 Internals
