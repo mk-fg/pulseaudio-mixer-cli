@@ -57,20 +57,23 @@ Internals
 --------------------
 
 Since I wasn't able to easily couple ncurses eventloop with glib/dbus one (which
-should poll for async signals), I settled on splitting each loop into it's own
+should poll for async signals), I settled on splitting glib loop into it's own
 process.
-
-Both communicate via pipes, opened before fork(), waking each other up from the
-respective loop (to process data being sent via pipes) when necessary with POSIX
-signals.
+Both loops communicate via pipes, opened before fork(), waking each other up
+from the respective loop (to process data being sent via pipes) when necessary
+with POSIX signals.
 
 Pulseaudio dbus interface was introduced in 1.0-dev branch (which is actually
 fairly old), but merged recently (mid-2011) into mainline versions.
 More documentation on it can be found via introspection or on [PA
 wiki](http://pulseaudio.org/wiki/DBusInterface).
 
-Since interface processes signals about new/removed streams, and not just polls
-the data on some intervals, it should be fairly responsive to changes.
+Since interface processes signals about new/removed streams and sinks, and not
+just polls the data on some intervals, it should be fairly responsive to these
+changes.
+There are signals for volume updates, but they aren't processed just for the
+sake of simplicity. Volume levels are polled on occasional changes anyway, so
+they should be updated on the ui update events.
 
 DBus reconnection is built-in, so there's no problem with transient pulseaudio
 processes, although the fact that the client is connected via dbus interface
