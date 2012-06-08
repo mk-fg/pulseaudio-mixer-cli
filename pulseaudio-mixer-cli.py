@@ -122,6 +122,14 @@ class PAMenu(dict):
 		pipe.readline() # unblock child
 
 
+	def _dbus_failsafe(method):
+		def dbus_failsafe_method(self, *argz, **kwz):
+			try: return method(self, *argz, **kwz)
+			except dbus.exceptions.DBusException:
+				self.refresh()
+				return method(self, *argz, **kwz)
+		return dbus_failsafe_method
+
 	def _dbus_dec(self, prop): return unicode(bytearray(it.ifilter(None, prop)))
 	def _name(self, iface, props):
 		# log.debug('\n'.join('{}: {}'.format(bytes(k), self._dbus_dec(v)) for k,v in props.items()))
@@ -143,6 +151,7 @@ class PAMenu(dict):
 		return name
 
 
+	@_dbus_failsafe
 	def add(self, path, iface):
 		stream = self.bus.get_object(object_path=path)
 		name = self._name(iface, dict(stream.Get(
@@ -151,6 +160,7 @@ class PAMenu(dict):
 		if len(name) > self.max_key_len: self.max_key_len = len(name)
 		return name
 
+	@_dbus_failsafe
 	def remove(self, path):
 		for name, (iface, obj) in self.viewitems():
 			if obj.object_path == path: break
@@ -197,9 +207,11 @@ class PAMenu(dict):
 		self.updates.append(pipe.readline().strip().split(' ', 1))
 
 
+	@_dbus_failsafe
 	def _get(self, item):
 		iface, obj = self[item]
 		return obj.Get('org.PulseAudio.Core1.{}'.format(iface), 'Volume')
+
 	def get(self, item, raw=False):
 		# log.debug('Get: {}'.format(item))
 		try: val, ts = self._val_cache[item]
@@ -222,10 +234,12 @@ class PAMenu(dict):
 			self._val_cache[item] = val, ts_chk
 		return (sum(val) / len(val)) if not raw else val # average of channels
 
+	@_dbus_failsafe
 	def _set(self, item, val):
 		iface, obj = self[item]
 		return obj.Set( 'org.PulseAudio.Core1.{}'.format(iface),
 			'Volume', val, dbus_interface='org.freedesktop.DBus.Properties' )
+
 	def set(self, item, val):
 		# log.debug('Set: {}'.format(item))
 		val = [max(0, min(1, val))] * len(self.get(item, raw=True)) # all channels to the same level
