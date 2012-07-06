@@ -124,10 +124,13 @@ class PAMenu(dict):
 
 	def _dbus_failsafe(method):
 		def dbus_failsafe_method(self, *argz, **kwz):
-			try: return method(self, *argz, **kwz)
-			except dbus.exceptions.DBusException:
-				self.refresh()
-				return method(self, *argz, **kwz)
+			# I must be doing something wrong, if this is necessary
+			for i in xrange(5):
+				try: return method(self, *argz, **kwz)
+				except dbus.exceptions.DBusException:
+					self.refresh()
+					if i > 0: sleep(0.1)
+			return method(self, *argz, **kwz)
 		return dbus_failsafe_method
 
 	def _dbus_dec(self, prop): return unicode(bytearray(it.ifilter(None, prop)))
