@@ -257,10 +257,12 @@ class PAMenu(dict):
 
 
 	def next_key(self, item):
-		try: return (list(it.dropwhile(lambda k: k != item, self)) + list(self))[1]
+		try: return (list(it.dropwhile(lambda k: k != item, self)) + list(self)*2)[1]
 		except IndexError: return ''
 	def prev_key(self, item):
-		try: return (list(it.dropwhile(lambda k: k != item, reversed(self))) + list(reversed(self)))[1]
+		try:
+			return (list(it.dropwhile( lambda k: k != item,
+				reversed(self) )) + list(reversed(self))*2)[1]
 		except IndexError: return ''
 
 	def __iter__(self, reverse=False):
