@@ -114,8 +114,8 @@ class PAMenu(dict):
 	updates = deque()
 	_val_cache = dict()
 
-	def __init__(self, cache_time=2):
-		self._cache_time = cache_time
+	def __init__(self, cache_time=2, fail_hook=None):
+		self.fail_hook, self._cache_time = fail_hook, cache_time
 		super(PAMenu, self).__init__()
 		self.refresh(soft=False)
 		signal.signal(signal.SIGUSR1, self.update_handler)
@@ -126,8 +126,11 @@ class PAMenu(dict):
 		def dbus_failsafe_method(self, *argz, **kwz):
 			try: return method(self, *argz, **kwz)
 			except dbus.exceptions.DBusException:
-				self.refresh()
-				return method(self, *argz, **kwz)
+				try:
+					self.refresh()
+					return method(self, *argz, **kwz)
+				except dbus.exceptions.DBusException:
+					if self.fail_hook: self.fail_hook()
 		return dbus_failsafe_method
 
 	def _dbus_dec(self, prop): return unicode(bytearray(it.ifilter(None, prop)))
@@ -326,7 +329,13 @@ def interactive_cli(stdscr, items, border=0):
 			elif key < 255 and key > 0 and chr(key) == 'q': exit()
 		except PAUpdate: continue
 
-wrapper(interactive_cli, items=PAMenu(), border=1)
+def reexec():
+	log.debug('Restarting the app due to some critical failure')
+	try: os.execv(__file__, sys.argv)
+	except OSError:
+		os.execvp('python', ['python', __file__] + sys.argv[1:])
+
+wrapper(interactive_cli, items=PAMenu(fail_hook=reexec), border=1)
 
 
 log.debug('Finished')
