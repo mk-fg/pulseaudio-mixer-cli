@@ -7,17 +7,23 @@ parser.add_argument('-a', '--adjust-step', action='store', type=int, default=5,
 	help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
 parser.add_argument('-l', '--max-level', action='store', type=int,
 	default=2**16, help='Value to treat as max (default: %(default)s).')
+parser.add_argument('--verbose', action='store_true',
+	help='Dont close stderr  to see sort of any errors (which'
+		' mess up curses interface, thus silenced that way by default).')
 parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
-argz = parser.parse_args()
-
-import logging
-logging.basicConfig(level=logging.DEBUG if argz.debug else logging.INFO)
-log = logging.getLogger()
+optz = parser.parse_args()
 
 
 import itertools as it, operator as op, functools as ft
 from subprocess import Popen, PIPE, STDOUT
 import os, sys, dbus
+
+import logging
+logging.basicConfig(level=logging.DEBUG if optz.debug else logging.INFO)
+log = logging.getLogger()
+
+if not optz.verbose and not optz.debug: sys.stderr.close()
+
 
 def get_bus_address():
 	srv_addr = os.environ.get('PULSE_DBUS_SERVER')
@@ -76,8 +82,9 @@ if not child_pid:
 	signal.signal(signal.SIGUSR1, lambda sig,frm: loop.quit())
 
 	def notify(path, op):
-		os.kill(core_pid, signal.SIGUSR1)
-		try: pipe.write('{} {}\n'.format(op, path))
+		try:
+			os.kill(core_pid, signal.SIGUSR1)
+			pipe.write('{} {}\n'.format(op, path))
 		except: loop.quit()
 
 	while True:
@@ -207,7 +214,8 @@ class PAMenu(dict):
 				'^': ft.partial(self.add, iface='Sink'), 'v': self.remove }[action](path)
 
 	def update_handler(self, sig, frm):
-		self.updates.append(pipe.readline().strip().split(' ', 1))
+		try: self.updates.append(pipe.readline().strip().split(' ', 1))
+		except IOError: reexec() # chlid's dead
 
 
 	@_dbus_failsafe
@@ -233,7 +241,7 @@ class PAMenu(dict):
 						dbus_err += 1
 					else: break
 			except KeyError: raise PAUpdate
-			val = tuple(op.truediv(val, argz.max_level) for val in val)
+			val = tuple(op.truediv(val, optz.max_level) for val in val)
 			self._val_cache[item] = val, ts_chk
 		return (sum(val) / len(val)) if not raw else val # average of channels
 
@@ -246,7 +254,7 @@ class PAMenu(dict):
 	def set(self, item, val):
 		# log.debug('Set: {}'.format(item))
 		val = [max(0, min(1, val))] * len(self.get(item, raw=True)) # all channels to the same level
-		val_dbus = list(dbus.UInt32(round(val * argz.max_level)) for val in val)
+		val_dbus = list(dbus.UInt32(round(val * optz.max_level)) for val in val)
 		try:
 			try: self._set(item, val_dbus)
 			except dbus.exceptions.DBusException:
@@ -301,7 +309,7 @@ def interactive_cli(stdscr, items, border=0):
 	win.keypad(True)
 
 	hl = next(iter(items)) if items else ''
-	argz.adjust_step /= 100.0
+	optz.adjust_step /= 100.0
 
 	while True:
 		if os.waitpid(child_pid, os.WNOHANG)[0]:
@@ -324,13 +332,15 @@ def interactive_cli(stdscr, items, border=0):
 			if key in (curses.KEY_DOWN, curses.KEY_UP):
 				hl = (items.next_key if key == curses.KEY_DOWN else items.prev_key)(hl)
 			elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
-				adj = (1 if key == curses.KEY_RIGHT else -1) * argz.adjust_step
+				adj = (1 if key == curses.KEY_RIGHT else -1) * optz.adjust_step
 				items.set(hl, items.get(hl) + adj)
 			elif key < 255 and key > 0 and chr(key) == 'q': exit()
 		except PAUpdate: continue
 
 def reexec():
 	log.debug('Restarting the app due to some critical failure')
+	try: os.kill(child_pid, signal.SIGKILL) # to prevent it sending USR1 to new process
+	except OSError: pass
 	try: os.execv(__file__, sys.argv)
 	except OSError:
 		os.execvp('python', ['python', __file__] + sys.argv[1:])
