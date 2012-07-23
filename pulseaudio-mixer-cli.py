@@ -7,8 +7,8 @@ parser.add_argument('-a', '--adjust-step', action='store', type=int, default=5,
 	help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
 parser.add_argument('-l', '--max-level', action='store', type=int,
 	default=2**16, help='Value to treat as max (default: %(default)s).')
-parser.add_argument('--verbose', action='store_true',
-	help='Dont close stderr  to see sort of any errors (which'
+parser.add_argument('-v', '--verbose', action='store_true',
+	help='Dont close stderr to see sort of any errors (which'
 		' mess up curses interface, thus silenced that way by default).')
 parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 optz = parser.parse_args()
@@ -141,7 +141,8 @@ class PAMenu(dict):
 		return dbus_failsafe_method
 
 	def _dbus_dec(self, prop): return unicode(bytearray(it.ifilter(None, prop)))
-	def _name(self, iface, props):
+	def _name( self, iface, props,
+			_unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2**30))) ):
 		# log.debug('\n'.join('{}: {}'.format(bytes(k), self._dbus_dec(v)) for k,v in props.items()))
 		if iface == 'Stream':
 			name = self._dbus_dec(props['application.name'])
@@ -150,8 +151,12 @@ class PAMenu(dict):
 		elif iface == 'Device':
 			try: name = self._dbus_dec(props['alsa.id'])
 			except KeyError:
-				name = '{}.{}'.format(*it.imap( self._dbus_dec,
-					[props['device.api'], props['device.string']] ))
+				try:
+					name = '{}.{}'.format(*it.imap( self._dbus_dec,
+						[props['device.api'], props['device.string']] ))
+				except KeyError:
+					name = '{} #{}'.format(
+						self._dbus_dec(props['device.description']), next(_unique_idx) )
 			ext = '({device.profile.name}@{alsa.driver_name})'
 		else: raise KeyError('Unknown interface (for naming): {}'.format(iface))
 		try:
