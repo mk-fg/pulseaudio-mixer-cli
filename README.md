@@ -28,12 +28,16 @@ mind), do a "chmod +x" on it, run.
 * Python 2.7
 * dbus-python (standard python dbus bindings)
 
+Also, make sure you have `load-module module-dbus-protocol` line in
+/etc/pulse/default.pa (or /etc/pulse/system.pa, if system-wide daemon is used).
+
 
 Usage
 --------------------
 
 	% ./pulseaudio-mixer-cli.py -h
-	usage: pulseaudio-mixer-cli.py [-h] [-a ADJUST_STEP] [-l MAX_LEVEL] [--debug]
+	usage: pulseaudio-mixer-cli.py [-h] [-a ADJUST_STEP] [-l MAX_LEVEL] [-v]
+	                               [--debug]
 
 	Pulseaudio sound level control tool.
 
@@ -44,13 +48,16 @@ Usage
 	                        (0-100%, default: 5%).
 	  -l MAX_LEVEL, --max-level MAX_LEVEL
 	                        Value to treat as max (default: 65536).
+	  -v, --verbose         Dont close stderr to see any sort of errors (which
+	                        mess up curses interface, thus silenced that way by
+	                        default).
 	  --debug               Verbose operation mode.
 
-That's basically how it looks:
+That's basically how it looks (sink levels always displayed on top):
 
-	ALSA plug-in [plugin-container] (fraggod@sacrilege:2914) [ ##################-------------------------------- ]
-	ALC269VB Analog (analog-stereo@snd_hda_intel)            [ ############################---------------------- ]
-	MPlayer (fraggod@sacrilege:5686)                         [ ############-------------------------------------- ]
+	ALC269VB Analog (analog-stereo@snd_hda_intel)            [ ############################------------ ]
+	ALSA plug-in [plugin-container] (fraggod@sacrilege:2914) [ ##################---------------------- ]
+	MPlayer (fraggod@sacrilege:5686)                         [ ############---------------------------- ]
 
 
 Internals

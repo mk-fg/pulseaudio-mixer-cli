@@ -8,7 +8,7 @@ parser.add_argument('-a', '--adjust-step', action='store', type=int, default=5,
 parser.add_argument('-l', '--max-level', action='store', type=int,
 	default=2**16, help='Value to treat as max (default: %(default)s).')
 parser.add_argument('-v', '--verbose', action='store_true',
-	help='Dont close stderr to see sort of any errors (which'
+	help='Dont close stderr to see any sort of errors (which'
 		' mess up curses interface, thus silenced that way by default).')
 parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 optz = parser.parse_args()
