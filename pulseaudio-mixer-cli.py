@@ -292,25 +292,35 @@ class PAMenu(dict):
 from curses.wrapper import wrapper
 import curses
 
-def cli_draw(win, items, hl=None):
-	win.erase() # remove old lines
-	for row,item in enumerate(items):
-		attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
-		win.addstr(row, 0, item, attrs)
-
-		bar_canvas = lambda bar='': ' [ ' + bar + ' ]'
-		bar_len = win.getmaxyx()[1] - items.max_key_len - len(bar_canvas())
-		bar_fill = int(round(items.get(item) * bar_len))
-		bar = bar_canvas('#'*bar_fill + '-'*(bar_len-bar_fill))
-		win.addstr(row, items.max_key_len, bar)
-
 def interactive_cli(stdscr, items, border=0):
 	curses.curs_set(0)
 	curses.use_default_colors()
 
-	win_geom = stdscr.getmaxyx()
-	win_geom = win_geom[0] - 2*border, win_geom[1] - 2*border, border, border
-	win = curses.newwin(*win_geom)
+	def win_size():
+		size = stdscr.getmaxyx()
+		return size[0] - 2*border, size[1] - 2*border
+
+	def win_draw( win, items, hl=None,
+			item_len_min=10, bar_len_min=10,
+			bar_caps=lambda bar='': ' [ ' + bar + ' ]' ):
+		win_len = win.getmaxyx()[1]
+		item_len_max = items.max_key_len
+		bar_len = win_len - item_len_max - len(bar_caps())
+		if bar_len < bar_len_min:
+			item_len_max = max( item_len_min,
+				item_len_max + bar_len - bar_len_min )
+			bar_len = win_len - item_len_max - len(bar_caps())
+			if bar_len < 0: item_len_max = win_len # just draw full labels
+
+		for row,item in enumerate(items):
+			attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
+			win.addstr(row, 0, item[:item_len_max], attrs)
+			if bar_len > 0:
+				bar_fill = int(round(items.get(item) * bar_len))
+				bar = bar_caps('#'*bar_fill + '-'*(bar_len-bar_fill))
+				win.addstr(row, item_len_max, bar)
+
+	win = curses.newwin(*(win_size() + (border, border)))
 	win.keypad(True)
 
 	hl = next(iter(items)) if items else ''
@@ -324,7 +334,7 @@ def interactive_cli(stdscr, items, border=0):
 		while items.updates: items.update()
 		if not items: items.refresh()
 
-		try: cli_draw(win, items, hl=hl)
+		try: win_draw(win, items, hl=hl)
 		except PAUpdate: continue
 
 		if items.updates: continue
@@ -340,6 +350,11 @@ def interactive_cli(stdscr, items, border=0):
 				adj = (1 if key == curses.KEY_RIGHT else -1) * optz.adjust_step
 				items.set(hl, items.get(hl) + adj)
 			elif key < 255 and key > 0 and chr(key) == 'q': exit()
+			elif key == curses.KEY_RESIZE:
+				win.resize(*win_size())
+				stdscr.erase()
+				win.erase()
+				stdscr.refresh()
 		except PAUpdate: continue
 
 def reexec():
