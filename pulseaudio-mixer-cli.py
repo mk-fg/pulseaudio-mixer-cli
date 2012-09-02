@@ -310,7 +310,7 @@ def interactive_cli(stdscr, items, border=0):
 			item_len_max = max( item_len_min,
 				item_len_max + bar_len - bar_len_min )
 			bar_len = win_len - item_len_max - len(bar_caps())
-			if bar_len < 0: item_len_max = win_len # just draw full labels
+			if bar_len <= 0: item_len_max = win_len # just draw labels
 
 		for row,item in enumerate(items):
 			attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
