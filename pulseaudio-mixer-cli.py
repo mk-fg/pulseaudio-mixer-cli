@@ -313,6 +313,7 @@ def interactive_cli(stdscr, items, border=0):
 			if bar_len <= 0: item_len_max = win_len # just draw labels
 			if item_len_max < item_len_min: item_len_max = items.max_key_len
 
+		win.erase() # cleanup old entries
 		for row,item in enumerate(items):
 			attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
 			win.addstr(row, 0, item[:item_len_max], attrs)
@@ -354,7 +355,6 @@ def interactive_cli(stdscr, items, border=0):
 			elif key == curses.KEY_RESIZE:
 				win.resize(*win_size())
 				stdscr.erase()
-				win.erase()
 				stdscr.refresh()
 		except PAUpdate: continue
 
