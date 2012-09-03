@@ -27,6 +27,10 @@ if not optz.verbose and not optz.debug: sys.stderr.close()
 
 def get_bus_address():
 	srv_addr = os.environ.get('PULSE_DBUS_SERVER')
+	if not srv_addr\
+			and os.access('/run/pulse/dbus-socket', os.R_OK | os.W_OK):
+		# Well-known system-wide daemon socket
+		srv_addr = 'unix:path=/run/pulse/dbus-socket'
 	if not srv_addr:
 		srv_addr = dbus.SessionBus().get_object(
 				'org.PulseAudio1', '/org/pulseaudio/server_lookup1' )\
