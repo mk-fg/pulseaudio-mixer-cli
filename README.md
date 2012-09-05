@@ -1,5 +1,7 @@
-pulseaudio-mixer-cli: interactive ncurses ui to control volume of pulse streams
+pulseaudio-mixer-cli
 --------------------
+
+Interactive ncurses UI to control volume of pulse streams.
 
 Kinda like alsamixer, but focused not on sink volume levels (which can actually
 be controlled via alsamixer, with alsa-pulse plugin), but rather on volume of
@@ -7,8 +9,8 @@ individual streams, so you can turn down the music to hear the stuff from game,
 mumble, skype or flash.
 
 Control over individual process streams seem to be almost unique to pulseaudio,
-pity there aren't much tools built to harness it. This one tries to fill the gap
-a bit.
+pity there aren't much tools built to harness it (at least weren't,
+initially). This one tries to fill the gap a bit.
 
 Initially wrote it to scratch my own itch in 2010, haven't changed pretty much
 anything since then.
@@ -71,7 +73,7 @@ from the respective loop (to process data being sent via pipes) when necessary
 with POSIX signals.
 
 Pulseaudio dbus interface was introduced in 1.0-dev branch (which is actually
-fairly old), but merged recently (mid-2011) into mainline versions.
+fairly old), but was merged mid-2011 into mainline versions.
 More documentation on it can be found via introspection or on [PA
 wiki](http://pulseaudio.org/wiki/DBusInterface).
 
@@ -82,9 +84,18 @@ There are signals for volume updates, but they aren't processed just for the
 sake of simplicity. Volume levels are polled on occasional changes anyway, so
 they should be updated on the ui update events.
 
-DBus reconnection is built-in, so there's no problem with transient pulseaudio
-processes, although the fact that the client is connected via dbus interface
-will keep them alive indefinitely.
+DBus reconnection (sometimes via re-exec, because python-dbus seem to cache more
+stuff than it probably should) is built-in, so there's no problem with transient
+pulseaudio processes, although the fact that the client is connected via dbus
+interface will keep them alive indefinitely.
 
 Starting the mixer should also trigger pulseaudio start, if proper dbus
 autolaunch service descriptions are installed in the system.
+
+It should also work with system-wide pulseaudio daemon (which usage is [highly
+discouraged by
+developers](http://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/WhatIsWrongWithSystemWide),
+btw), in which case neither dbus system nor session bus is accessed, since
+ServerLookup interface doesn't seem to be available on either one (at least in
+2.1), and pa-private bus is accessed via well-known socket location at
+/run/pulse/dbus-socket (see also #4).
