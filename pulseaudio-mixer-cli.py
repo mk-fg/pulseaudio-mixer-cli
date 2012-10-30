@@ -356,7 +356,7 @@ def interactive_cli(stdscr, items, border=0):
 				adj = (1 if key == curses.KEY_RIGHT else -1) * optz.adjust_step
 				items.set(hl, items.get(hl) + adj)
 			elif key < 255 and key > 0 and chr(key) == 'q': exit()
-			elif key == curses.KEY_RESIZE:
+			elif key in (curses.KEY_RESIZE, ord('\f')):
 				win.resize(*win_size())
 				stdscr.erase()
 				stdscr.refresh()
