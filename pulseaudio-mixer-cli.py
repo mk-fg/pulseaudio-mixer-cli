@@ -350,11 +350,14 @@ def interactive_cli(stdscr, items, border=0):
 		log.debug('Keypress event: {}'.format(key))
 
 		try:
-			if key in (curses.KEY_DOWN, curses.KEY_UP):
-				hl = (items.next_key if key == curses.KEY_DOWN else items.prev_key)(hl)
-			elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
-				adj = (1 if key == curses.KEY_RIGHT else -1) * optz.adjust_step
-				items.set(hl, items.get(hl) + adj)
+			if key in (curses.KEY_DOWN, ord('j')):
+				hl = items.next_key(hl)
+			elif key in (curses.KEY_UP, ord('k')):
+				hl = items.prev_key(hl)
+			elif key in (curses.KEY_LEFT, ord('h')):
+				items.set(hl, items.get(hl) - optz.adjust_step)
+			elif key in (curses.KEY_RIGHT, ord('l')):
+				items.set(hl, items.get(hl) + optz.adjust_step)
 			elif key < 255 and key > 0 and chr(key) == 'q': exit()
 			elif key in (curses.KEY_RESIZE, ord('\f')):
 				win.resize(*win_size())
