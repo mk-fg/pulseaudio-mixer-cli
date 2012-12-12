@@ -149,7 +149,9 @@ class PAMenu(dict):
 			_unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2**30))) ):
 		# log.debug('\n'.join('{}: {}'.format(bytes(k), self._dbus_dec(v)) for k,v in props.items()))
 		if iface == 'Stream':
-			name = self._dbus_dec(props['application.name'])
+			try: name = self._dbus_dec(props['application.name'])
+			except KeyError:
+				name = '{} #{}'.format(self._dbus_dec(props['media.name']), next(_unique_idx))
 			ext = '({application.process.user}@'\
 				'{application.process.host}:{application.process.id})'
 		elif iface == 'Device':
