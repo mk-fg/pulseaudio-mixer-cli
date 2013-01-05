@@ -372,11 +372,12 @@ def interactive_cli(stdscr, items, border=0):
 		for row,item in enumerate(items):
 			attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
 			win.addstr(row, 0, item[:item_len_max], attrs)
-			if items.get_mute(item):
-				mute_button = " M"
-			else:
-				mute_button = " *"
-			win.addstr(row, item_len_max, mute_button)
+			if win_len > item_len_max + mute_button_len:
+				if items.get_mute(item):
+					mute_button = " M"
+				else:
+					mute_button = " -"
+				win.addstr(row, item_len_max, mute_button)
 
 			if bar_len > 0:
 				bar_fill = int(round(items.get_volume(item) * bar_len))
