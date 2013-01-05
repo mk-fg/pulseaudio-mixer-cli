@@ -274,6 +274,29 @@ class PAMenu(dict):
 		except KeyError: raise PAUpdate
 		self._val_cache[item] = val, time()
 
+	@_dbus_failsafe
+	def _get_mute(self, item):
+		iface, obj = self[item]
+		return obj.Get('org.PulseAudio.Core1.{}'.format(iface), 'Mute')
+
+
+	def get_mute(self, item):
+		val = 0
+		dbus_err = 0
+		try:
+			while True:
+				try: val = self._get_mute(item)
+			        except dbus.exceptions.DBusException:
+					raise
+					self.refresh()
+					if time() > ts_chk + 5: break # max loop time = 5s
+					if dbus_err > 1: sleep(0.1) # introduce at least some delay
+					dbus_err += 1
+				else: break
+		except KeyError: raise PAUpdate
+
+		return val
+
 
 	def next_key(self, item):
 		try: return (list(it.dropwhile(lambda k: k != item, self)) + list(self)*2)[1]
@@ -311,7 +334,8 @@ def interactive_cli(stdscr, items, border=0):
 			bar_caps=lambda bar='': ' [ ' + bar + ' ]' ):
 		win_len = win.getmaxyx()[1]
 		item_len_max = items.max_key_len
-		bar_len = win_len - item_len_max - len(bar_caps())
+		mute_button_len = 2
+		bar_len = win_len - item_len_max - mute_button_len - len(bar_caps())
 		if bar_len < bar_len_min:
 			item_len_max = max( item_len_min,
 				item_len_max + bar_len - bar_len_min )
@@ -323,10 +347,16 @@ def interactive_cli(stdscr, items, border=0):
 		for row,item in enumerate(items):
 			attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
 			win.addstr(row, 0, item[:item_len_max], attrs)
+			if items.get_mute(item):
+				mute_button = " M"
+			else:
+				mute_button = " *"
+			win.addstr(row, item_len_max, mute_button)
+
 			if bar_len > 0:
 				bar_fill = int(round(items.get_volume(item) * bar_len))
 				bar = bar_caps('#'*bar_fill + '-'*(bar_len-bar_fill))
-				win.addstr(row, item_len_max, bar)
+				win.addstr(row, item_len_max + mute_button_len, bar)
 
 	win = curses.newwin(*(win_size() + (border, border)))
 	win.keypad(True)
