@@ -90,10 +90,10 @@ interface will keep them alive indefinitely.
 Starting the mixer should also trigger pulseaudio start, if proper dbus
 autolaunch service descriptions are installed in the system.
 
-It should also work with system-wide pulseaudio daemon (which usage is [highly
-discouraged by
+It should also work with system-wide pulseaudio daemon (usage of which is
+[highly discouraged by
 developers](http://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/WhatIsWrongWithSystemWide),
-btw), in which case neither dbus system nor session bus is accessed, since
+btw) - in that case neither dbus system nor session bus is accessed, since
 ServerLookup interface doesn't seem to be available on either one (at least in
 2.1), and pa-private bus is accessed via well-known socket location at
 /run/pulse/dbus-socket (see also #4).
