@@ -12,11 +12,9 @@ Control over individual process streams seem to be almost unique to pulseaudio,
 pity there aren't much tools built to harness it (at least weren't,
 initially). This one tries to fill the gap a bit.
 
-Initially wrote it to scratch my own itch in 2010, haven't changed pretty much
-anything since then.
-
-A bit more info:
-http://blog.fraggod.net/2010/12/Commandline-pulseaudio-mixer-tool
+Thanks to the most awesome contributors, the tool is now useable with
+system-wide pulseaudio instance, can mute streams/sinks, works with vi-style
+keys as well as cursor and has many other fixes and features.
 
 
 Installation
@@ -57,9 +55,9 @@ Usage
 
 That's basically how it looks (sink levels always displayed on top):
 
-	ALC269VB Analog (analog-stereo@snd_hda_intel)            [ ############################------------ ]
-	ALSA plug-in [plugin-container] (fraggod@sacrilege:2914) [ ##################---------------------- ]
-	MPlayer (fraggod@sacrilege:5686)                         [ ############---------------------------- ]
+	ALC269VB Analog (analog-stereo@snd_hda_intel)            - [ ############################---------- ]
+	ALSA plug-in [plugin-container] (fraggod@sacrilege:2914) - [ ##################-------------------- ]
+	MPlayer (fraggod@sacrilege:5686)                         - [ ############-------------------------- ]
 
 
 Internals
