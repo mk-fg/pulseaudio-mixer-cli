@@ -123,7 +123,8 @@ class PAUpdate(Exception): pass
 class PAMenu(dict):
 	# OrderedDict doesn't seem to handle clear+update correctly in py2.7
 	updates = deque()
-	_val_cache = dict()
+	_volume_val_cache = dict()
+	_mute_val_cache = dict()
 
 	def __init__(self, cache_time=2, fail_hook=None):
 		self.fail_hook, self._cache_time = fail_hook, cache_time
@@ -196,7 +197,8 @@ class PAMenu(dict):
 		if not soft:
 			self.clear()
 			self.bus = get_bus()
-		self._val_cache.clear()
+		self._volume_val_cache.clear()
+		self._mute_val_cache.clear()
 		self.max_key_len = 0 # should be recalculated from these entries only
 		try:
 			stream_names = set(
@@ -236,7 +238,7 @@ class PAMenu(dict):
 
 	def get_volume(self, item, raw=False):
 		# log.debug('Get: {}'.format(item))
-		try: val, ts = self._val_cache[item]
+		try: val, ts = self._volume_val_cache[item]
 		except KeyError: val = None
 		ts_chk = time()
 		if val is None or ts < ts_chk - self._cache_time:
@@ -253,7 +255,7 @@ class PAMenu(dict):
 					else: break
 			except KeyError: raise PAUpdate
 			val = tuple(op.truediv(val, optz.max_level) for val in val)
-			self._val_cache[item] = val, ts_chk
+			self._volume_val_cache[item] = val, ts_chk
 		return (sum(val) / len(val)) if not raw else val # average of channels
 
 	@_dbus_failsafe
@@ -272,7 +274,7 @@ class PAMenu(dict):
 				self.refresh()
 				self._set_volume(item, val_dbus)
 		except KeyError: raise PAUpdate
-		self._val_cache[item] = val, time()
+		self._volume_val_cache[item] = val, time()
 
 	@_dbus_failsafe
 	def _get_mute(self, item):
@@ -281,20 +283,24 @@ class PAMenu(dict):
 
 
 	def get_mute(self, item):
-		val = 0
-		dbus_err = 0
-		try:
-			while True:
-				try: val = self._get_mute(item)
-			        except dbus.exceptions.DBusException:
-					raise
-					self.refresh()
-					if time() > ts_chk + 5: break # max loop time = 5s
-					if dbus_err > 1: sleep(0.1) # introduce at least some delay
-					dbus_err += 1
-				else: break
-		except KeyError: raise PAUpdate
-
+		# log.debug('Get: {}'.format(item))
+		try: val, ts = self._mute_val_cache[item]
+		except KeyError: val = None
+		ts_chk = time()
+		if val is None or ts < ts_chk - self._cache_time:
+			dbus_err = 0
+			try:
+				while True:
+					try: val = self._get_mute(item)
+					except dbus.exceptions.DBusException:
+						raise
+						self.refresh()
+						if time() > ts_chk + 5: break # max loop time = 5s
+						if dbus_err > 1: sleep(0.1) # introduce at least some delay
+						dbus_err += 1
+					else: break
+			except KeyError: raise PAUpdate
+			self._mute_val_cache[item] = val, ts_chk
 		return val
 
 
