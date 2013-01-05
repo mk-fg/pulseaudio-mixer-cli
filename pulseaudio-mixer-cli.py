@@ -303,10 +303,29 @@ class PAMenu(dict):
 			self._mute_val_cache[item] = val, ts_chk
 		return val
 
+	@_dbus_failsafe
+	def _set_mute(self, item, val):
+		iface, obj = self[item]
+		return obj.Set( 'org.PulseAudio.Core1.{}'.format(iface),
+			'Mute', val, dbus_interface='org.freedesktop.DBus.Properties' )
+
+	def set_mute(self, item, val):
+		# log.debug('Set: {}'.format(item))
+		#val = [max(0, min(1, val))] * len(self.get_mute(item, raw=True)) # all channels to the same level
+		#val_dbus = list(dbus.Boolean(val) for val in val)
+		val_dbus = dbus.Boolean(val)
+		try:
+			try: self._set_mute(item, val_dbus)
+			except dbus.exceptions.DBusException:
+				self.refresh()
+				self._set_mute(item, val_dbus)
+		except KeyError: raise PAUpdate
+		self._mute_val_cache[item] = val, time()
 
 	def next_key(self, item):
 		try: return (list(it.dropwhile(lambda k: k != item, self)) + list(self)*2)[1]
 		except IndexError: return ''
+
 	def prev_key(self, item):
 		try:
 			return (list(it.dropwhile( lambda k: k != item,
@@ -396,6 +415,8 @@ def interactive_cli(stdscr, items, border=0):
 				items.set_volume(hl, items.get_volume(hl) - optz.adjust_step)
 			elif key in (curses.KEY_RIGHT, ord('l')):
 				items.set_volume(hl, items.get_volume(hl) + optz.adjust_step)
+			elif key is ord('m'):
+				items.set_mute(hl, not items.get_mute(hl))
 			elif key < 255 and key > 0 and chr(key) == 'q': exit()
 			elif key in (curses.KEY_RESIZE, ord('\f')):
 				win.resize(*win_size())
