@@ -237,7 +237,6 @@ class PAMenu(dict):
 		return obj.Get('org.PulseAudio.Core1.{}'.format(iface), 'Volume')
 
 	def get_volume(self, item, raw=False):
-		# log.debug('Get: {}'.format(item))
 		try: val, ts = self._volume_val_cache[item]
 		except KeyError: val = None
 		ts_chk = time()
@@ -265,7 +264,6 @@ class PAMenu(dict):
 			'Volume', val, dbus_interface='org.freedesktop.DBus.Properties' )
 
 	def set_volume(self, item, val):
-		# log.debug('Set: {}'.format(item))
 		val = [max(0, min(1, val))] * len(self.get_volume(item, raw=True)) # all channels to the same level
 		val_dbus = list(dbus.UInt32(round(val * optz.max_level)) for val in val)
 		try:
@@ -276,14 +274,13 @@ class PAMenu(dict):
 		except KeyError: raise PAUpdate
 		self._volume_val_cache[item] = val, time()
 
+
 	@_dbus_failsafe
 	def _get_mute(self, item):
 		iface, obj = self[item]
 		return obj.Get('org.PulseAudio.Core1.{}'.format(iface), 'Mute')
 
-
 	def get_mute(self, item):
-		# log.debug('Get: {}'.format(item))
 		try: val, ts = self._mute_val_cache[item]
 		except KeyError: val = None
 		ts_chk = time()
@@ -310,9 +307,6 @@ class PAMenu(dict):
 			'Mute', val, dbus_interface='org.freedesktop.DBus.Properties' )
 
 	def set_mute(self, item, val):
-		# log.debug('Set: {}'.format(item))
-		#val = [max(0, min(1, val))] * len(self.get_mute(item, raw=True)) # all channels to the same level
-		#val_dbus = list(dbus.Boolean(val) for val in val)
 		val_dbus = dbus.Boolean(val)
 		try:
 			try: self._set_mute(item, val_dbus)
@@ -321,6 +315,7 @@ class PAMenu(dict):
 				self._set_mute(item, val_dbus)
 		except KeyError: raise PAUpdate
 		self._mute_val_cache[item] = val, time()
+
 
 	def next_key(self, item):
 		try: return (list(it.dropwhile(lambda k: k != item, self)) + list(self)*2)[1]
