@@ -101,7 +101,7 @@ if not child_pid:
 				('PlaybackStreamRemoved', ft.partial(notify, op='-')) ):
 			bus.add_signal_receiver(sig_handler, sig_name)
 			core.ListenForSignal( 'org.PulseAudio.Core1.{}'\
- 				.format(sig_name), dbus.Array(signature='o') )
+				.format(sig_name), dbus.Array(signature='o') )
 		loop.run()
 
 	# This should never be executed
