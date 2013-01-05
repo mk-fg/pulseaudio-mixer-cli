@@ -101,7 +101,7 @@ if not child_pid:
 				('PlaybackStreamRemoved', ft.partial(notify, op='-')) ):
 			bus.add_signal_receiver(sig_handler, sig_name)
 			core.ListenForSignal( 'org.PulseAudio.Core1.{}'\
-				.format(sig_name), dbus.Array(signature='o') )
+ 				.format(sig_name), dbus.Array(signature='o') )
 		loop.run()
 
 	# This should never be executed
@@ -230,11 +230,11 @@ class PAMenu(dict):
 
 
 	@_dbus_failsafe
-	def _get(self, item):
+	def _get_volume(self, item):
 		iface, obj = self[item]
 		return obj.Get('org.PulseAudio.Core1.{}'.format(iface), 'Volume')
 
-	def get(self, item, raw=False):
+	def get_volume(self, item, raw=False):
 		# log.debug('Get: {}'.format(item))
 		try: val, ts = self._val_cache[item]
 		except KeyError: val = None
@@ -243,7 +243,7 @@ class PAMenu(dict):
 			dbus_err = 0
 			try:
 				while True:
-					try: val = self._get(item)
+					try: val = self._get_volume(item)
 					except dbus.exceptions.DBusException:
 						raise
 						self.refresh()
@@ -257,20 +257,20 @@ class PAMenu(dict):
 		return (sum(val) / len(val)) if not raw else val # average of channels
 
 	@_dbus_failsafe
-	def _set(self, item, val):
+	def _set_volume(self, item, val):
 		iface, obj = self[item]
 		return obj.Set( 'org.PulseAudio.Core1.{}'.format(iface),
 			'Volume', val, dbus_interface='org.freedesktop.DBus.Properties' )
 
-	def set(self, item, val):
+	def set_volume(self, item, val):
 		# log.debug('Set: {}'.format(item))
-		val = [max(0, min(1, val))] * len(self.get(item, raw=True)) # all channels to the same level
+		val = [max(0, min(1, val))] * len(self.get_volume(item, raw=True)) # all channels to the same level
 		val_dbus = list(dbus.UInt32(round(val * optz.max_level)) for val in val)
 		try:
-			try: self._set(item, val_dbus)
+			try: self._set_volume(item, val_dbus)
 			except dbus.exceptions.DBusException:
 				self.refresh()
-				self._set(item, val_dbus)
+				self._set_volume(item, val_dbus)
 		except KeyError: raise PAUpdate
 		self._val_cache[item] = val, time()
 
@@ -324,7 +324,7 @@ def interactive_cli(stdscr, items, border=0):
 			attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
 			win.addstr(row, 0, item[:item_len_max], attrs)
 			if bar_len > 0:
-				bar_fill = int(round(items.get(item) * bar_len))
+				bar_fill = int(round(items.get_volume(item) * bar_len))
 				bar = bar_caps('#'*bar_fill + '-'*(bar_len-bar_fill))
 				win.addstr(row, item_len_max, bar)
 
@@ -357,9 +357,9 @@ def interactive_cli(stdscr, items, border=0):
 			elif key in (curses.KEY_UP, ord('k')):
 				hl = items.prev_key(hl)
 			elif key in (curses.KEY_LEFT, ord('h')):
-				items.set(hl, items.get(hl) - optz.adjust_step)
+				items.set_volume(hl, items.get_volume(hl) - optz.adjust_step)
 			elif key in (curses.KEY_RIGHT, ord('l')):
-				items.set(hl, items.get(hl) + optz.adjust_step)
+				items.set_volume(hl, items.get_volume(hl) + optz.adjust_step)
 			elif key < 255 and key > 0 and chr(key) == 'q': exit()
 			elif key in (curses.KEY_RESIZE, ord('\f')):
 				win.resize(*win_size())
