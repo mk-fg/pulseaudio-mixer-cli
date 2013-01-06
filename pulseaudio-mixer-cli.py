@@ -241,17 +241,7 @@ class PAMenu(dict):
 		except KeyError: val = None
 		ts_chk = time()
 		if val is None or ts < ts_chk - self._cache_time:
-			dbus_err = 0
-			try:
-				while True:
-					try: val = self._get_volume(item)
-					except dbus.exceptions.DBusException:
-						raise
-						self.refresh()
-						if time() > ts_chk + 5: break # max loop time = 5s
-						if dbus_err > 1: sleep(0.1) # introduce at least some delay
-						dbus_err += 1
-					else: break
+			try: val = self._get_volume(item)
 			except KeyError: raise PAUpdate
 			val = tuple(op.truediv(val, optz.max_level) for val in val)
 			self._volume_val_cache[item] = val, ts_chk
@@ -285,17 +275,7 @@ class PAMenu(dict):
 		except KeyError: val = None
 		ts_chk = time()
 		if val is None or ts < ts_chk - self._cache_time:
-			dbus_err = 0
-			try:
-				while True:
-					try: val = self._get_mute(item)
-					except dbus.exceptions.DBusException:
-						raise
-						self.refresh()
-						if time() > ts_chk + 5: break # max loop time = 5s
-						if dbus_err > 1: sleep(0.1) # introduce at least some delay
-						dbus_err += 1
-					else: break
+			try: val = self._get_mute(item)
 			except KeyError: raise PAUpdate
 			self._mute_val_cache[item] = val, ts_chk
 		return val
