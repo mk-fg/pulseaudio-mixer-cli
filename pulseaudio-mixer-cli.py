@@ -136,12 +136,16 @@ class PAMenu(dict):
 
 	def _dbus_failsafe(method):
 		def dbus_failsafe_method(self, *argz, **kwz):
+			# It doesn't seem to matter how large pa-restart and
+			#  dbus-reconnection delay is - something like UnknownMethod
+			#  will be raised in this pid anyway - only restart works
 			try: return method(self, *argz, **kwz)
 			except dbus.exceptions.DBusException:
 				try:
 					self.refresh()
 					return method(self, *argz, **kwz)
-				except dbus.exceptions.DBusException:
+				except dbus.exceptions.DBusException as err:
+					log.debug('Fatal error accessing dbus: {}'.format(err))
 					if self.fail_hook: self.fail_hook()
 		return dbus_failsafe_method
 
@@ -256,11 +260,7 @@ class PAMenu(dict):
 	def set_volume(self, item, val):
 		val = [max(0, min(1, val))] * len(self.get_volume(item, raw=True)) # all channels to the same level
 		val_dbus = list(dbus.UInt32(round(val * optz.max_level)) for val in val)
-		try:
-			try: self._set_volume(item, val_dbus)
-			except dbus.exceptions.DBusException:
-				self.refresh()
-				self._set_volume(item, val_dbus)
+		try: self._set_volume(item, val_dbus)
 		except KeyError: raise PAUpdate
 		self._volume_val_cache[item] = val, time()
 
@@ -288,11 +288,7 @@ class PAMenu(dict):
 
 	def set_mute(self, item, val):
 		val_dbus = dbus.Boolean(val)
-		try:
-			try: self._set_mute(item, val_dbus)
-			except dbus.exceptions.DBusException:
-				self.refresh()
-				self._set_mute(item, val_dbus)
+		try: self._set_mute(item, val_dbus)
 		except KeyError: raise PAUpdate
 		self._mute_val_cache[item] = val, time()
 
