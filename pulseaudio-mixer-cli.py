@@ -363,27 +363,35 @@ def interactive_cli(stdscr, items, border=0):
 
     def win_size():
         size = stdscr.getmaxyx()
-        return size[0] - 2 * border, size[1] - 2 * border
+        return max(1, size[0] - 2 * border), max(1, size[1] - 2 * border)
 
     def win_draw(win, items, hl=None,
                  item_len_min=10, bar_len_min=10,
                  bar_caps=lambda bar='': ' [ ' + bar + ' ]'):
-        win_len = win.getmaxyx()[1]
+        win_rows, win_len = win.getmaxyx()
+        if win_len <= 1:
+            return
+
         item_len_max = items.max_key_len
         mute_button_len = 2
         bar_len = win_len - item_len_max - mute_button_len - len(bar_caps())
         if bar_len < bar_len_min:
             item_len_max = max(item_len_min,
                                item_len_max + bar_len - bar_len_min)
-            bar_len = win_len - item_len_max - len(bar_caps())
+            bar_len = win_len - item_len_max - mute_button_len - len(bar_caps())
             if bar_len <= 0:
                 item_len_max = win_len  # just draw labels
             if item_len_max < item_len_min:
-                item_len_max = items.max_key_len
+                item_len_max = min(items.max_key_len, win_len)
 
         win.erase()  # cleanup old entries
         for row, item in enumerate(items):
+            if row >= win_rows - 1:
+                # Not sure why bottom window row seem to be unuseable
+                break
+
             attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
+
             win.addstr(row, 0, item[:item_len_max], attrs)
             if win_len > item_len_max + mute_button_len:
                 if items.get_mute(item):
@@ -392,10 +400,11 @@ def interactive_cli(stdscr, items, border=0):
                     mute_button = " -"
                 win.addstr(row, item_len_max, mute_button)
 
-            if bar_len > 0:
-                bar_fill = int(round(items.get_volume(item) * bar_len))
-                bar = bar_caps('#' * bar_fill + '-' * (bar_len - bar_fill))
-                win.addstr(row, item_len_max + mute_button_len, bar)
+                if bar_len > 0:
+                    bar_fill = int(round(items.get_volume(item) * bar_len))
+                    bar = bar_caps('#' * bar_fill + '-' * (bar_len - bar_fill))
+                    log.debug(str(['BAR', row, win_rows, win_len]))
+                    win.addstr(row, item_len_max + mute_button_len, bar)
 
     win = curses.newwin(*(win_size() + (border, border)))
     win.keypad(True)
@@ -441,9 +450,10 @@ def interactive_cli(stdscr, items, border=0):
             elif key < 255 and key > 0 and chr(key) == 'q':
                 exit()
             elif key in (curses.KEY_RESIZE, ord('\f')):
-                win.resize(*win_size())
-                stdscr.erase()
+                curses.endwin()
                 stdscr.refresh()
+                win = curses.newwin(*(win_size() + (border, border)))
+                win.keypad(True)
         except PAUpdate:
             continue
 
