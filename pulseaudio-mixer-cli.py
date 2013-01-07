@@ -6,7 +6,7 @@ parser = argparse.ArgumentParser(description='Pulseaudio sound level control too
 parser.add_argument('-a', '--adjust-step', action='store', type=int, default=5,
 	help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
 parser.add_argument('-l', '--max-level', action='store', type=int,
-	default=2**16, help='Value to treat as max (default: %(default)s).')
+	default=2 ** 16, help='Value to treat as max (default: %(default)s).')
 parser.add_argument('-v', '--verbose', action='store_true',
 	help='Dont close stderr to see any sort of errors (which'
 		' mess up curses interface, thus silenced that way by default).')
@@ -37,6 +37,7 @@ def get_bus_address():
 			.Get( 'org.PulseAudio.ServerLookup1',
 				'Address', dbus_interface='org.freedesktop.DBus.Properties' )
 	return srv_addr
+
 
 def get_bus(srv_addr=None, dont_start=False):
 	while not srv_addr:
@@ -83,7 +84,7 @@ if not child_pid:
 
 	DBusGMainLoop(set_as_default=True)
 	loop = gobject.MainLoop()
-	signal.signal(signal.SIGUSR1, lambda sig,frm: loop.quit())
+	signal.signal(signal.SIGUSR1, lambda sig, frm: loop.quit())
 
 	def notify(path, op):
 		try:
@@ -100,7 +101,7 @@ if not child_pid:
 				('NewPlaybackStream', ft.partial(notify, op='+')),
 				('PlaybackStreamRemoved', ft.partial(notify, op='-')) ):
 			bus.add_signal_receiver(sig_handler, sig_name)
-			core.ListenForSignal( 'org.PulseAudio.Core1.{}'\
+			core.ListenForSignal('org.PulseAudio.Core1.{}'
 				.format(sig_name), dbus.Array(signature='o') )
 		loop.run()
 
@@ -118,7 +119,10 @@ from collections import deque
 from time import time, sleep
 import re # for some templating
 
-class PAUpdate(Exception): pass
+
+class PAUpdate(Exception):
+	pass
+
 
 class PAMenu(dict):
 	# OrderedDict doesn't seem to handle clear+update correctly in py2.7
@@ -132,7 +136,6 @@ class PAMenu(dict):
 		self.refresh(soft=False)
 		signal.signal(signal.SIGUSR1, self.update_handler)
 		pipe.readline() # unblock child
-
 
 	def _dbus_failsafe(method):
 		def dbus_failsafe_method(self, *argz, **kwz):
@@ -150,8 +153,9 @@ class PAMenu(dict):
 		return dbus_failsafe_method
 
 	def _dbus_dec(self, prop): return unicode(bytearray(it.ifilter(None, prop)))
+
 	def _name( self, iface, props,
-			_unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2**30))) ):
+			_unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30))) ):
 		# log.debug('\n'.join('{}: {}'.format(bytes(k), self._dbus_dec(v)) for k,v in props.items()))
 		if iface == 'Stream':
 			try: name = self._dbus_dec(props['application.name'])
@@ -171,11 +175,10 @@ class PAMenu(dict):
 			ext = '({device.profile.name}@{alsa.driver_name})'
 		else: raise KeyError('Unknown interface (for naming): {}'.format(iface))
 		try:
-			name = '{} {}'.format( name, re.sub(r'\{([^}]+)\}', r'{}', ext)\
+			name = '{} {}'.format( name, re.sub(r'\{([^}]+)\}', r'{}', ext)
 				.format(*it.imap(self._dbus_dec, op.itemgetter(*re.findall(r'\{([^}]+)\}', ext))(props))) )
 		except KeyError: pass
 		return name
-
 
 	@_dbus_failsafe
 	def add(self, path, iface):
@@ -195,7 +198,6 @@ class PAMenu(dict):
 		if len(name) == self.max_key_len:
 			self.max_key_len = max(it.imap(len, self)) if self else 0
 
-
 	def refresh(self, soft=True):
 		log.debug('PA-refresh initiated')
 		if not soft:
@@ -207,12 +209,12 @@ class PAMenu(dict):
 		try:
 			stream_names = set(
 				self.add(path, 'Stream') for path in
-				self.bus.get_object(object_path='/org/pulseaudio/core1')\
+				self.bus.get_object(object_path='/org/pulseaudio/core1')
 					.Get( 'org.PulseAudio.Core1', 'PlaybackStreams',
 						dbus_interface='org.freedesktop.DBus.Properties' ) )
 			sink_names = set(
 				self.add(path, 'Device') for path in
-				self.bus.get_object(object_path='/org/pulseaudio/core1')\
+				self.bus.get_object(object_path='/org/pulseaudio/core1')
 					.Get( 'org.PulseAudio.Core1', 'Sinks',
 						dbus_interface='org.freedesktop.DBus.Properties' ) )
 		except dbus.exceptions.DBusException: # bus is probably abandoned
@@ -233,7 +235,6 @@ class PAMenu(dict):
 	def update_handler(self, sig, frm):
 		try: self.updates.append(pipe.readline().strip().split(' ', 1))
 		except IOError: reexec() # chlid's dead
-
 
 	@_dbus_failsafe
 	def _get_volume(self, item):
@@ -258,12 +259,13 @@ class PAMenu(dict):
 			'Volume', val, dbus_interface='org.freedesktop.DBus.Properties' )
 
 	def set_volume(self, item, val):
-		val = [max(0, min(1, val))] * len(self.get_volume(item, raw=True)) # all channels to the same level
+		# all channels to the same level
+		val = [max(0, min(1, val))] * len(self.get_volume(item, raw=True))
+
 		val_dbus = list(dbus.UInt32(round(val * optz.max_level)) for val in val)
 		try: self._set_volume(item, val_dbus)
 		except KeyError: raise PAUpdate
 		self._volume_val_cache[item] = val, time()
-
 
 	@_dbus_failsafe
 	def _get_mute(self, item):
@@ -292,19 +294,19 @@ class PAMenu(dict):
 		except KeyError: raise PAUpdate
 		self._mute_val_cache[item] = val, time()
 
-
 	def next_key(self, item):
-		try: return (list(it.dropwhile(lambda k: k != item, self)) + list(self)*2)[1]
+		try: return (list(it.dropwhile(lambda k: k != item, self)) + list(self) * 2)[1]
 		except IndexError: return ''
 
 	def prev_key(self, item):
 		try:
 			return (list(it.dropwhile( lambda k: k != item,
-				reversed(self) )) + list(reversed(self))*2)[1]
+				reversed(self))) + list(reversed(self)) * 2)[1]
 		except IndexError: return ''
 
 	def __iter__(self, reverse=False):
 		return iter(sorted(self.viewkeys(), reverse=reverse))
+
 	def __reversed__(self): return self.__iter__(reverse=True)
 
 	def __del__(self):
@@ -317,13 +319,14 @@ class PAMenu(dict):
 from curses.wrapper import wrapper
 import curses
 
+
 def interactive_cli(stdscr, items, border=0):
 	curses.curs_set(0)
 	curses.use_default_colors()
 
 	def win_size():
 		size = stdscr.getmaxyx()
-		return size[0] - 2*border, size[1] - 2*border
+		return size[0] - 2 * border, size[1] - 2 * border
 
 	def win_draw( win, items, hl=None,
 			item_len_min=10, bar_len_min=10,
@@ -340,7 +343,7 @@ def interactive_cli(stdscr, items, border=0):
 			if item_len_max < item_len_min: item_len_max = items.max_key_len
 
 		win.erase() # cleanup old entries
-		for row,item in enumerate(items):
+		for row, item in enumerate(items):
 			attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
 			win.addstr(row, 0, item[:item_len_max], attrs)
 			if win_len > item_len_max + mute_button_len:
@@ -352,7 +355,7 @@ def interactive_cli(stdscr, items, border=0):
 
 			if bar_len > 0:
 				bar_fill = int(round(items.get_volume(item) * bar_len))
-				bar = bar_caps('#'*bar_fill + '-'*(bar_len-bar_fill))
+				bar = bar_caps('#' * bar_fill + '-' * (bar_len - bar_fill))
 				win.addstr(row, item_len_max + mute_button_len, bar)
 
 	win = curses.newwin(*(win_size() + (border, border)))
@@ -395,6 +398,7 @@ def interactive_cli(stdscr, items, border=0):
 				stdscr.erase()
 				stdscr.refresh()
 		except PAUpdate: continue
+
 
 def reexec():
 	log.debug('Restarting the app due to some critical failure')
