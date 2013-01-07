@@ -403,7 +403,6 @@ def interactive_cli(stdscr, items, border=0):
                 if bar_len > 0:
                     bar_fill = int(round(items.get_volume(item) * bar_len))
                     bar = bar_caps('#' * bar_fill + '-' * (bar_len - bar_fill))
-                    log.debug(str(['BAR', row, win_rows, win_len]))
                     win.addstr(row, item_len_max + mute_button_len, bar)
 
     win = curses.newwin(*(win_size() + (border, border)))
