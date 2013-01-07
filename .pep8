@@ -1,3 +1,2 @@
 [pep8]
-ignore = W191,E122,E128,E201,E202,E261,E701,E401
 max-line-length = 100
