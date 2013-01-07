@@ -116,7 +116,7 @@ else:
 ### UI backend
 
 from collections import deque
-from time import time, sleep
+from time import time
 import re # for some templating
 
 
