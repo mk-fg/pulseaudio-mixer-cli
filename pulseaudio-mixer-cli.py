@@ -436,13 +436,13 @@ def interactive_cli(stdscr, items, border=0):
         log.debug('Keypress event: {}'.format(key))
 
         try:
-            if key in (curses.KEY_DOWN, ord('j')):
+            if key in (curses.KEY_DOWN, ord('j'), ord('n')):
                 hl = items.next_key(hl)
-            elif key in (curses.KEY_UP, ord('k')):
+            elif key in (curses.KEY_UP, ord('k'), ord('p')):
                 hl = items.prev_key(hl)
-            elif key in (curses.KEY_LEFT, ord('h')):
+            elif key in (curses.KEY_LEFT, ord('h'), ord('b')):
                 items.set_volume(hl, items.get_volume(hl) - optz.adjust_step)
-            elif key in (curses.KEY_RIGHT, ord('l')):
+            elif key in (curses.KEY_RIGHT, ord('l'), ord('f')):
                 items.set_volume(hl, items.get_volume(hl) + optz.adjust_step)
             elif key is ord('m'):
                 items.set_mute(hl, not items.get_mute(hl))
