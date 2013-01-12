@@ -444,7 +444,7 @@ def interactive_cli(stdscr, items, border=0):
                 items.set_volume(hl, items.get_volume(hl) - optz.adjust_step)
             elif key in (curses.KEY_RIGHT, ord('l'), ord('f')):
                 items.set_volume(hl, items.get_volume(hl) + optz.adjust_step)
-            elif key is ord('m'):
+            elif key in (ord(' '), ord('m')):
                 items.set_mute(hl, not items.get_mute(hl))
             elif key < 255 and key > 0 and chr(key) == 'q':
                 exit()
