@@ -271,7 +271,7 @@ class PAMenu(dict):
                 val = self._get_volume(item)
             except KeyError:
                 raise PAUpdate
-            val = tuple(op.truediv(val, optz.max_level) for val in val)
+            val = tuple(min(op.truediv(val, optz.max_level), 1.0) for val in val)
             self._volume_val_cache[item] = val, ts_chk
         return (sum(val) / len(val)) if not raw else val  # average of channels
 
