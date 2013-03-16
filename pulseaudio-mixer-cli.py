@@ -1,29 +1,51 @@
 #!/usr/bin/python
 from __future__ import unicode_literals, print_function
 
+import os, sys
+
+defaults = {'adjust-step': 5, 'max-level': 2 ** 16, 'verbose': False, 'debug': False}
+
+# Read configuration file, if any
+try:
+    with open(os.path.expanduser('~/.pulseauido-mixer-cli.cfg')) as src:
+        import ConfigParser
+        config = ConfigParser.SafeConfigParser(allow_no_value=True)
+        config.readfp(src)
+except (OSError, IOError): pass
+else:
+    for k, v in defaults.viewitems():
+        get_val = config.getint if isinstance(v, int) else config.getbolean
+        try: defaults[k] = get_val('default', k)
+        except ConfigParser.Error: pass
+
 import argparse
 parser = argparse.ArgumentParser(description='Pulseaudio sound level control tool.')
-parser.add_argument('-a', '--adjust-step', action='store', type=int, default=5,
+parser.add_argument('-a', '--adjust-step',
+                    action='store', type=int, metavar='step', default=defaults['adjust-step'],
                     help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
-parser.add_argument('-l', '--max-level', action='store', type=int,
-                    default=2 ** 16, help='Value to treat as max (default: %(default)s).')
-parser.add_argument('-v', '--verbose', action='store_true',
+parser.add_argument('-l', '--max-level',
+                    action='store', type=int, metavar='level', default=defaults['max-level'],
+                    help='Value to treat as max (default: %(default)s).')
+parser.add_argument('-v', '--verbose',
+                    action='store_true', default=defaults['verbose'],
                     help='Dont close stderr to see any sort of errors (which'
                     ' mess up curses interface, thus silenced that way by default).')
-parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+parser.add_argument('--debug',
+                    action='store_true', default=defaults['debug'],
+                    help='Verbose operation mode.')
 optz = parser.parse_args()
 
 
 import itertools as it, operator as op, functools as ft
 from subprocess import Popen, PIPE, STDOUT
-import os, sys, dbus
+import dbus
 
 import logging
 logging.basicConfig(level=logging.DEBUG if optz.debug else logging.INFO)
 log = logging.getLogger()
 
 if not optz.verbose and not optz.debug:
-    sys.stderr.close()
+    sys.stderr.close()  # so that output won't break the interface
 
 
 def get_bus_address():

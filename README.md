@@ -36,17 +36,16 @@ Usage
 --------------------
 
 	% ./pulseaudio-mixer-cli.py -h
-	usage: pulseaudio-mixer-cli.py [-h] [-a ADJUST_STEP] [-l MAX_LEVEL] [-v]
-	                               [--debug]
+	usage: pulseaudio-mixer-cli.py [-h] [-a step] [-l level] [-v] [--debug]
 
 	Pulseaudio sound level control tool.
 
 	optional arguments:
 	  -h, --help            show this help message and exit
-	  -a ADJUST_STEP, --adjust-step ADJUST_STEP
+	  -a step, --adjust-step step
 	                        Adjustment for a single keypress in interactive mode
 	                        (0-100%, default: 5%).
-	  -l MAX_LEVEL, --max-level MAX_LEVEL
+	  -l level, --max-level level
 	                        Value to treat as max (default: 65536).
 	  -v, --verbose         Dont close stderr to see any sort of errors (which
 	                        mess up curses interface, thus silenced that way by
@@ -58,6 +57,22 @@ That's basically how it looks (sink levels always displayed on top):
 	ALC269VB Analog (analog-stereo@snd_hda_intel)            - [ ############################---------- ]
 	ALSA plug-in [plugin-container] (fraggod@sacrilege:2914) - [ ##################-------------------- ]
 	MPlayer (fraggod@sacrilege:5686)                         - [ ############-------------------------- ]
+
+Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg" (see
+[ConfigParser docs](http://docs.python.org/2/library/configparser.html) for more
+details on format), which may contain definitions for any options, allowed on
+the command line in the "[default]" section.
+
+For example:
+
+	[default]
+	adjust-step: 2
+	max-level: 131072
+
+Such config is totally optional, and might be useful in case default options
+aren't suitable for a specific setup and creating a shell alias or wrapper is
+too much trouble.
+Commandline values override the ones defined in a config file.
 
 
 Internals
