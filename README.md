@@ -23,13 +23,16 @@ Installation
 Just copy the script to wherever is convenient (~/bin or /usr/local/bin comes to
 mind), do a "chmod +x" on it, run.
 
+Make sure you have `load-module module-dbus-protocol` line in
+/etc/pulse/default.pa (or /etc/pulse/system.pa, if system-wide daemon is used),
+especially on Ubuntu, where it seem to be disabled by default
+(see [#1](https://github.com/mk-fg/pulseaudio-mixer-cli/issues/1)).
+
 ### Requirements
 
 * Python 2.7
 * dbus-python (standard python dbus bindings)
-
-Also, make sure you have `load-module module-dbus-protocol` line in
-/etc/pulse/default.pa (or /etc/pulse/system.pa, if system-wide daemon is used).
+* PulseAudio 1.0+
 
 
 Usage
