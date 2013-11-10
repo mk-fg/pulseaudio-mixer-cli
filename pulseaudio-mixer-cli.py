@@ -360,8 +360,13 @@ class PAMenu(dict):
         except IndexError:
             return ''
 
+    def _sort_key(self, item):
+        name, (iface, obj) = item
+        return iface, name
+
     def __iter__(self, reverse=False):
-        return iter(sorted(self.viewkeys(), reverse=reverse))
+        return iter(it.imap(op.itemgetter(0),
+                            sorted(self.viewitems(), key=self._sort_key, reverse=reverse)))
 
     def __reversed__(self):
         return self.__iter__(reverse=True)
