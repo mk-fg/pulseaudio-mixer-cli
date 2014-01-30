@@ -50,6 +50,9 @@ Usage
 	                        (0-100%, default: 5%).
 	  -l level, --max-level level
 	                        Value to treat as max (default: 65536).
+	  -n, --use-media-name  Display streams by "media.name" property, if possible.
+	                        Default is to prefer application name and process
+	                        properties.
 	  -v, --verbose         Dont close stderr to see any sort of errors (which
 	                        mess up curses interface, thus silenced that way by
 	                        default).
@@ -71,6 +74,7 @@ For example:
 	[default]
 	adjust-step: 2
 	max-level: 131072
+	use-media-name: true
 
 Such config is totally optional, and might be useful in case default options
 aren't suitable for a specific setup and creating a shell alias or wrapper is
@@ -109,9 +113,8 @@ Starting the mixer should also trigger pulseaudio start, if proper dbus
 autolaunch service descriptions are installed in the system.
 
 It should also work with system-wide pulseaudio daemon (usage of which is
-[highly discouraged by
-developers](http://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/WhatIsWrongWithSystemWide),
+[highly discouraged by developers](http://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/WhatIsWrongWithSystemWide),
 btw) - in that case neither dbus system nor session bus is accessed, since
 ServerLookup interface doesn't seem to be available on either one (at least in
 2.1), and pa-private bus is accessed via well-known socket location at
-/run/pulse/dbus-socket (see also #4).
+/run/pulse/dbus-socket (see also #4(https://github.com/mk-fg/pulseaudio-mixer-cli/issues/4)).

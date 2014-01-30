@@ -3,7 +3,8 @@ from __future__ import unicode_literals, print_function
 
 import os, sys
 
-defaults = {'adjust-step': 5, 'max-level': 2 ** 16, 'verbose': False, 'debug': False}
+defaults = {'adjust-step': 5, 'max-level': 2 ** 16,
+            'use-media-name': False, 'verbose': False, 'debug': False}
 
 # Read configuration file, if any
 try:
@@ -26,6 +27,10 @@ parser.add_argument('-a', '--adjust-step',
 parser.add_argument('-l', '--max-level',
                     action='store', type=int, metavar='level', default=defaults['max-level'],
                     help='Value to treat as max (default: %(default)s).')
+parser.add_argument('-n', '--use-media-name',
+                    action='store_true', default=defaults['use-media-name'],
+                    help='Display streams by "media.name" property, if possible.'
+                    ' Default is to prefer application name and process properties.')
 parser.add_argument('-v', '--verbose',
                     action='store_true', default=defaults['verbose'],
                     help='Dont close stderr to see any sort of errors (which'
@@ -182,14 +187,23 @@ class PAMenu(dict):
     def _dbus_dec(self, prop):
         return unicode(bytearray(it.ifilter(None, prop)))
 
-    def _name(self, iface, props,
+    def _name_make_unique(self, name,
               _unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30)))):
+        return '{} #{}'.format(name, next(_unique_idx))
+
+    def _name(self, iface, props):
         # log.debug('\n'.join('{}: {}'.format(bytes(k), self._dbus_dec(v)) for k,v in props.items()))
         if iface == 'Stream':
+            if optz.use_media_name:
+                try:
+                    return self._dbus_dec(props['media.name'])
+                except KeyError:
+                    pass
             try:
                 name = self._dbus_dec(props['application.name'])
             except KeyError:
-                name = '{} #{}'.format(self._dbus_dec(props['media.name']), next(_unique_idx))
+                # Assuming some synthetic stream with non-descriptive name
+                name = self._name_make_unique(self._dbus_dec(props['media.name']))
             ext = '({application.process.user}@'\
                 '{application.process.host}:{application.process.id})'
         elif iface == 'Device':
@@ -215,8 +229,13 @@ class PAMenu(dict):
     @_dbus_failsafe
     def add(self, path, iface):
         stream = self.bus.get_object(object_path=path)
-        name = self._name(iface, dict(stream.Get(
-            'org.PulseAudio.Core1.{}'.format(iface), 'PropertyList')))
+        stream_props = dict(stream.Get(
+            'org.PulseAudio.Core1.{}'.format(iface), 'PropertyList'))
+        name = self._name(iface, stream_props)
+        if optz.use_media_name and name in self:
+            # Names can be duplicate here, as no client id get added - they are long enough as it is
+            self[self._name_make_unique(name)] = self.pop(name)
+            name = self._name_make_unique(name)
         self[name] = iface, stream
         if len(name) > self.max_key_len:
             self.max_key_len = len(name)
