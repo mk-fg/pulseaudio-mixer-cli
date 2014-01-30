@@ -14,7 +14,7 @@ try:
 except (OSError, IOError): pass
 else:
     for k, v in defaults.viewitems():
-        get_val = config.getint if isinstance(v, int) else config.getbolean
+        get_val = config.getint if not isinstance(v, bool) else config.getboolean
         try: defaults[k] = get_val('default', k)
         except ConfigParser.Error: pass
 
