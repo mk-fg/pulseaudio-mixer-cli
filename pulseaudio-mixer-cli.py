@@ -32,7 +32,7 @@ parser.add_argument('-n', '--use-media-name',
                     help='Display streams by "media.name" property, if possible.'
                     ' Default is to prefer application name and process properties.')
 parser.add_argument('-e', '--encoding',
-                    default=defaults['encoding'],
+                    metavar='enc', default=defaults['encoding'],
                     help='Encoding to enforce for the output. Any non-decodeable bytes will be stripped.'
                     ' Mostly useful with --use-media-name. Default: %(default)s.')
 parser.add_argument('-v', '--verbose',

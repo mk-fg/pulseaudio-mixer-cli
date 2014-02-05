@@ -53,6 +53,10 @@ Usage
 	  -n, --use-media-name  Display streams by "media.name" property, if possible.
 	                        Default is to prefer application name and process
 	                        properties.
+	-e enc, --encoding enc
+	                        Encoding to enforce for the output. Any non-decodeable
+	                        bytes will be stripped. Mostly useful with --use-
+	                        media-name. Default: utf-8.
 	  -v, --verbose         Dont close stderr to see any sort of errors (which
 	                        mess up curses interface, thus silenced that way by
 	                        default).
