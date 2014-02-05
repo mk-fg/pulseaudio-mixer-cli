@@ -3,7 +3,7 @@ from __future__ import unicode_literals, print_function
 
 import os, sys
 
-defaults = {'adjust-step': 5, 'max-level': 2 ** 16,
+defaults = {'adjust-step': 5, 'max-level': 2 ** 16, 'encoding': 'utf-8',
             'use-media-name': False, 'verbose': False, 'debug': False}
 
 # Read configuration file, if any
@@ -31,6 +31,10 @@ parser.add_argument('-n', '--use-media-name',
                     action='store_true', default=defaults['use-media-name'],
                     help='Display streams by "media.name" property, if possible.'
                     ' Default is to prefer application name and process properties.')
+parser.add_argument('-e', '--encoding',
+                    default=defaults['encoding'],
+                    help='Encoding to enforce for the output. Any non-decodeable bytes will be stripped.'
+                    ' Mostly useful with --use-media-name. Default: %(default)s.')
 parser.add_argument('-v', '--verbose',
                     action='store_true', default=defaults['verbose'],
                     help='Dont close stderr to see any sort of errors (which'
@@ -185,7 +189,7 @@ class PAMenu(dict):
         return dbus_failsafe_method
 
     def _dbus_dec(self, prop):
-        return unicode(bytearray(it.ifilter(None, prop)))
+        return unicode(bytes(bytearray(it.ifilter(None, prop))), optz.encoding, 'ignore')
 
     def _name_make_unique(self, name,
               _unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30)))):
@@ -438,7 +442,7 @@ def interactive_cli(stdscr, items, border=0):
 
             attrs = curses.A_REVERSE if item == hl else curses.A_NORMAL
 
-            win.addstr(row, 0, item[:item_len_max], attrs)
+            win.addstr(row, 0, item[:item_len_max].encode(optz.encoding), attrs)
             if win_len > item_len_max + mute_button_len:
                 if items.get_mute(item):
                     mute_button = " M"
