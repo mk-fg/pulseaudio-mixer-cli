@@ -75,7 +75,7 @@ def get_bus(srv_addr=None, dont_start=False):
     while not srv_addr:
         try:
             srv_addr = get_bus_address()
-            log.debug('Got pa-server bus from dbus: {}'.format(srv_addr))
+            log.debug('Got pa-server bus from dbus: %s', srv_addr)
         except dbus.exceptions.DBusException as err:
             if dont_start or srv_addr is False or\
                     err.get_dbus_name() != 'org.freedesktop.DBus.Error.ServiceUnknown':
@@ -183,7 +183,7 @@ class PAMenu(dict):
                     self.refresh()
                     return method(self, *argz, **kwz)
                 except dbus.exceptions.DBusException as err:
-                    log.debug('Fatal error accessing dbus: {}'.format(err))
+                    log.debug('Fatal error accessing dbus: %s', err)
                     if self.fail_hook:
                         self.fail_hook()
         return dbus_failsafe_method
@@ -191,12 +191,14 @@ class PAMenu(dict):
     def _dbus_dec(self, prop):
         return unicode(bytes(bytearray(it.ifilter(None, prop))), optz.encoding, 'ignore')
 
-    _unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30))
+    _unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30)))
 
-    def _name_make_unique(self, name):
-        return '{} #{}'.format(name, next(self._unique_idx))
+    def _get_name_unique(self, name):
+        tpl = '{} #{}'
+        if isinstance(name, bytes): tpl = tpl.encode(optz.encoding)
+        return tpl.format(name, next(self._unique_idx))
 
-    def _name(self, iface, props):
+    def _get_name(self, iface, props):
         # log.debug('\n'.join('{}: {}'.format(bytes(k), self._dbus_dec(v)) for k,v in props.items()))
         if iface == 'Stream':
             if optz.use_media_name:
@@ -208,7 +210,7 @@ class PAMenu(dict):
                 name = self._dbus_dec(props['application.name'])
             except KeyError:
                 # Assuming some synthetic stream with non-descriptive name
-                name = self._name_make_unique(self._dbus_dec(props['media.name']))
+                name = self._get_name_unique(self._dbus_dec(props['media.name']))
             ext = '({application.process.user}@'\
                 '{application.process.host}:{application.process.id})'
         elif iface == 'Device':
@@ -236,11 +238,11 @@ class PAMenu(dict):
         stream = self.bus.get_object(object_path=path)
         stream_props = dict(stream.Get(
             'org.PulseAudio.Core1.{}'.format(iface), 'PropertyList'))
-        name = self._name(iface, stream_props)
+        name = self._get_name(iface, stream_props)
         if optz.use_media_name and name in self:
             # Names can be duplicate here, as no client id get added - they are long enough as it is
-            self[self._name_make_unique(name)] = self.pop(name)
-            name = self._name_make_unique(name)
+            self[self._get_name_unique(name)] = self.pop(name)
+            name = self._get_name_unique(name)
         self[name] = iface, stream
         if len(name) > self.max_key_len:
             self.max_key_len = len(name)
@@ -484,7 +486,7 @@ def interactive_cli(stdscr, items, border=0):
             key = win.getch()
         except curses.error:
             continue
-        log.debug('Keypress event: {}'.format(key))
+        log.debug('Keypress event: %s', key)
 
         try:
             if key in (curses.KEY_DOWN, ord('j'), ord('n')):
