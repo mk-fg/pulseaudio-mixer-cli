@@ -191,9 +191,10 @@ class PAMenu(dict):
     def _dbus_dec(self, prop):
         return unicode(bytes(bytearray(it.ifilter(None, prop))), optz.encoding, 'ignore')
 
-    def _name_make_unique(self, name,
-              _unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30)))):
-        return '{} #{}'.format(name, next(_unique_idx))
+    _unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30))
+
+    def _name_make_unique(self, name):
+        return '{} #{}'.format(name, next(self._unique_idx))
 
     def _name(self, iface, props):
         # log.debug('\n'.join('{}: {}'.format(bytes(k), self._dbus_dec(v)) for k,v in props.items()))
@@ -219,7 +220,7 @@ class PAMenu(dict):
                                                    [props['device.api'], props['device.string']]))
                 except KeyError:
                     name = '{} #{}'.format(
-                        self._dbus_dec(props['device.description']), next(_unique_idx))
+                        self._dbus_dec(props['device.description']), next(self._unique_idx))
             ext = '({device.profile.name}@{alsa.driver_name})'
         else:
             raise KeyError('Unknown interface (for naming): {}'.format(iface))
