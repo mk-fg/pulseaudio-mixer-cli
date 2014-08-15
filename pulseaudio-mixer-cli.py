@@ -221,6 +221,7 @@ class PAMenu(dict):
                     name = '{}.{}'.format(*it.imap(self._dbus_dec,
                                                    [props['device.api'], props['device.string']]))
                 except KeyError:
+                    _unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30)))
                     name = '{} #{}'.format(
                         self._dbus_dec(props['device.description']), next(self._unique_idx))
             ext = '({device.profile.name}@{alsa.driver_name})'
