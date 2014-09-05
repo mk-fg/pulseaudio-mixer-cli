@@ -8,16 +8,22 @@ defaults = {'adjust-step': 5, 'max-level': 2 ** 16, 'encoding': 'utf-8',
 
 # Read configuration file, if any
 try:
-    with open(os.path.expanduser('~/.pulseauido-mixer-cli.cfg')) as src:
-        import ConfigParser
-        config = ConfigParser.SafeConfigParser(allow_no_value=True)
+    # Python 3
+    import configparser
+except ImportError:
+    # Python 2
+    import ConfigParser as configparser
+
+try:
+    with open(os.path.expanduser('~/.pulseaudio-mixer-cli.cfg')) as src:
+        config = configparser.SafeConfigParser(allow_no_value=True)
         config.readfp(src)
 except (OSError, IOError): pass
 else:
-    for k, v in defaults.viewitems():
+    for k, v in defaults.items():
         get_val = config.getint if not isinstance(v, bool) else config.getboolean
         try: defaults[k] = get_val('default', k)
-        except ConfigParser.Error: pass
+        except configparser.Error: pass
 
 import argparse
 parser = argparse.ArgumentParser(description='Pulseaudio sound level control tool.')
@@ -48,6 +54,9 @@ optz = parser.parse_args()
 import itertools as it, operator as op, functools as ft
 from subprocess import Popen, PIPE, STDOUT
 import dbus
+
+if sys.version_info.major == 3:
+    it.imap, unicode = map, str
 
 import logging
 logging.basicConfig(level=logging.DEBUG if optz.debug else logging.INFO)
@@ -108,21 +117,21 @@ if not child_pid:
     #  how to combine curses-input and glib loops otherwise
 
     from dbus.mainloop.glib import DBusGMainLoop
-    import gobject
+    from gi.repository import GLib
 
     os.close(fd_out)
     pipe = open(fd_in, 'wb', buffering=0)
-    pipe.write('\n')  # wait for main process to get ready
+    pipe.write(b'\n')  # wait for main process to get ready
     log.debug('DBus signal handler thread started')
 
     DBusGMainLoop(set_as_default=True)
-    loop = gobject.MainLoop()
+    loop = GLib.MainLoop()
     signal.signal(signal.SIGUSR1, lambda sig, frm: loop.quit())
 
     def notify(path, op):
         try:
             os.kill(core_pid, signal.SIGUSR1)
-            pipe.write('{} {}\n'.format(op, path))
+            pipe.write('{} {}\n'.format(op, path).encode('utf-8'))
         except:
             loop.quit()
 
@@ -189,9 +198,9 @@ class PAMenu(dict):
         return dbus_failsafe_method
 
     def _dbus_dec(self, prop):
-        return unicode(bytes(bytearray(it.ifilter(None, prop))), optz.encoding, 'ignore')
+        return unicode(bytes(bytearray((_ for _ in prop if _))), optz.encoding, 'ignore')
 
-    _unique_idx=it.chain.from_iterable(it.imap(xrange, it.repeat(2 ** 30)))
+    _unique_idx=it.cycle(it.takewhile(lambda _:_<2**30, it.count(0)))
 
     def _get_name_unique(self, name):
         tpl = '{} #{}'
@@ -250,7 +259,7 @@ class PAMenu(dict):
 
     @_dbus_failsafe
     def remove(self, path):
-        for name, (iface, obj) in self.viewitems():
+        for name, (iface, obj) in self.items():
             if obj.object_path == path:
                 break
         else:
@@ -299,9 +308,9 @@ class PAMenu(dict):
 
     def update_handler(self, sig, frm):
         try:
-            self.updates.append(pipe.readline().strip().split(' ', 1))
+            self.updates.append(pipe.readline().decode('utf-8').strip().split(' ', 1))
         except IOError:
-            reexec()  # chlid's dead
+            reexec()  # child's dead
 
     @_dbus_failsafe
     def _get_volume(self, item):
@@ -392,7 +401,7 @@ class PAMenu(dict):
 
     def __iter__(self, reverse=False):
         return iter(it.imap(op.itemgetter(0),
-                            sorted(self.viewitems(), key=self._sort_key, reverse=reverse)))
+                            sorted(self.items(), key=self._sort_key, reverse=reverse)))
 
     def __reversed__(self):
         return self.__iter__(reverse=True)
@@ -406,7 +415,7 @@ class PAMenu(dict):
 
 ### UI rendering / input loop
 
-from curses.wrapper import wrapper
+from curses import wrapper
 import curses
 
 
