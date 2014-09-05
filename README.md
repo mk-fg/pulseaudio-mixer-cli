@@ -122,3 +122,14 @@ btw) - in that case neither dbus system nor session bus is accessed, since
 ServerLookup interface doesn't seem to be available on either one (at least in
 2.1), and pa-private bus is accessed via well-known socket location at
 /run/pulse/dbus-socket (see also #4(https://github.com/mk-fg/pulseaudio-mixer-cli/issues/4)).
+
+
+TODO
+--------------------
+
+- Rewrite the whole thing, splitting all dbus-related ops into a subprocess
+  (currently it's only signals), leaving a clean "curses UI vs dbus/glib api
+  client" split.
+
+  Should allow to drop a lot of "try-except" cruft around all dbus ops and the
+  whole "restart" thing will only apply to dbus sub-pid, leaving UI unharmed.
