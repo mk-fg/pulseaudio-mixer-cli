@@ -53,7 +53,7 @@ Usage
 	  -n, --use-media-name  Display streams by "media.name" property, if possible.
 	                        Default is to prefer application name and process
 	                        properties.
-	-e enc, --encoding enc
+	  -e enc, --encoding enc
 	                        Encoding to enforce for the output. Any non-decodeable
 	                        bytes will be stripped. Mostly useful with --use-
 	                        media-name. Default: utf-8.
@@ -121,7 +121,7 @@ It should also work with system-wide pulseaudio daemon (usage of which is
 btw) - in that case neither dbus system nor session bus is accessed, since
 ServerLookup interface doesn't seem to be available on either one (at least in
 2.1), and pa-private bus is accessed via well-known socket location at
-/run/pulse/dbus-socket (see also #4(https://github.com/mk-fg/pulseaudio-mixer-cli/issues/4)).
+/run/pulse/dbus-socket (see also [#4](https://github.com/mk-fg/pulseaudio-mixer-cli/issues/4)).
 
 
 TODO
