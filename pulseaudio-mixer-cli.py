@@ -212,7 +212,9 @@ class PAMenu(dict):
         if iface == 'Stream':
             if optz.use_media_name:
                 try:
-                    return self._dbus_dec(props['media.name'])
+                    name = self._dbus_dec(props['media.name'])
+                    if name == 'audio stream': raise KeyError
+                    return name
                 except KeyError:
                     pass
             try:
