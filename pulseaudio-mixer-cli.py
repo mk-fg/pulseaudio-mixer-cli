@@ -201,6 +201,7 @@ class PAMenu(dict):
         return unicode(bytes(bytearray((_ for _ in prop if _))), optz.encoding, 'ignore')
 
     _unique_idx=it.cycle(it.takewhile(lambda _:_<2**30, it.count(0)))
+    _placeholder_names = ['audio stream', 'AudioStream']
 
     def _get_name_unique(self, name):
         tpl = '{} #{}'
@@ -213,7 +214,7 @@ class PAMenu(dict):
             if optz.use_media_name:
                 try:
                     name = self._dbus_dec(props['media.name'])
-                    if name == 'audio stream': raise KeyError
+                    if name in self._placeholder_names: raise KeyError
                     return name
                 except KeyError:
                     pass
