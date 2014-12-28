@@ -133,3 +133,18 @@ TODO
 
   Should allow to drop a lot of "try-except" cruft around all dbus ops and the
   whole "restart" thing will only apply to dbus sub-pid, leaving UI unharmed.
+
+- Add in-app storage and/or configuration of volume levels based on stream
+  parameters.
+
+  Use-case is basically forcing PA to drop volume to low for e.g. new streams,
+  instead of blasting your ears off every time "mpv" starts on a loud stream
+  (e.g. net radio) after volume for it has been upped in PA for a quiet "talk"
+  video.
+
+  Also, I still can't seem to fully get the logic (didn't look into code/modules
+  though) of PA setting the initial volumes, sometimes it seem rather arbitrary.
+
+- Make number row keys ("1" to "0") set fixed levels (out of max) - e.g. "1" for
+  0%, "0" for 100%, to avoid wasting time on fiddling with left-right keys when
+  you know exactly what you want.
