@@ -148,3 +148,7 @@ TODO
 - Make number row keys ("1" to "0") set fixed levels (out of max) - e.g. "1" for
   0%, "0" for 100%, to avoid wasting time on fiddling with left-right keys when
   you know exactly what you want.
+
+- Check if stream name attribute can change over the stream lifetime (e.g. mpv
+  online radio stream), listen for signals for such changes or poll stream name
+  attr every few seconds (optionally).
