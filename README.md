@@ -28,6 +28,9 @@ Make sure you have `load-module module-dbus-protocol` line in
 especially on Ubuntu, where it seem to be disabled by default
 (see [#1](https://github.com/mk-fg/pulseaudio-mixer-cli/issues/1)).
 
+There is a "pa-mixer-mk2.py" script in the repo, which is unfinished and
+unusable yet, just ignore it for now.
+
 ### Requirements
 
 * Python 2.7
@@ -133,6 +136,9 @@ TODO
 
   Should allow to drop a lot of "try-except" cruft around all dbus ops and the
   whole "restart" thing will only apply to dbus sub-pid, leaving UI unharmed.
+
+  Started rewrite as "pa-mixer-mk2.py", not finished yet, will probably keep old
+  version around indefinitely anyway, for compatibility, py3 and such.
 
 - Add in-app storage and/or configuration of volume levels based on stream
   parameters.
