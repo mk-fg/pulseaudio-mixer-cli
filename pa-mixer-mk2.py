@@ -23,40 +23,72 @@ def update_conf_from_file(conf, path_or_file):
 		except configparser.Error: pass
 
 
-class PAMixerGlibLoopError(Exception): pass
+class PAMixerDBusBridgeError(Exception): pass
 
-class PAMixerGlibLoop(object):
+class PAMixerDBusBridge(object):
 	'''Class to import/spawn glib/dbus eventloop in a
-			subprocess and communicate with it through signals and pipes.
-		Should ideally be started as soon as possible,
-			to avoid carrying whatever baggage from parent pid after fork.'''
+			subprocess and communicate with it via signals and pipes.
+		Presents async kinda-rpc interface to a dbus loop running in separate pid.
+		Comm protocol is json lines, with signal sent to parent pid on any dbus async event.'''
 
-	def __init__(self, sig=signal.SIGUSR1):
-		self.signal, self._pipe = sig, None
+	signal = signal.SIGUSR1 # used to break curses loop in the parent pid
+
+	def __init__(self, child_cmd=None):
+		self.child_cmd, self.core_pid = child_cmd, os.getppid()
+		self.child_sigs, self.child_calls, self._child = deque(), dict(), None
 
 
-	def child_start(self):
-		signal.signal(self.signal, signal.SIG_IGN)
-		if self._pipe: self._pipe.close()
-		fd_out, fd_in = os.pipe()
-		self.core_pid = os.getpid()
-		self.child_pid = os.fork()
+	def _child_readline(self, wait_for_cid=None, one_signal=False, init_line=False):
+		while True:
+			if wait_for_cid and cid in self.child_calls:
+				line = self.child_calls[cid]
+				self.child_calls.clear()
+				return line
+			line = self._child.stdout.readline().strip()
+			if init_line:
+				assert line.strip() == 'ready', repr(line)
+				break
+			line = json.loads(line)
+			if line['t'] == 'signal':
+				self.child_sigs.append(line)
+				if one_signal: break
+			elif line['t'] == 'call': self.child_calls[cid] = line
 
-		if not self.child_pid:
-			try: self._child_run() # returns only on errors
-			except Exception as err:
-				log.exception('Unexpectedly broke out of glib loop due to exception: %s', err)
-			raise PAMixerGlibLoopError()
+	def call(self, func, *args):
+		self.child_check_restart()
+		cid = os.urandom(4)
+		call = json.dumps(dict(t='call', cid=cid, func=func, args=args))
+		assert '\n' not in call, repr(call)
+		self._child.stdin.write('{}\n'.format(call))
+		return self._child_readline(wait_for_cid=cid)['value']
 
-		else:
-			os.close(fd_in)
-			self._pipe = io.open(fd_out, 'rb', buffering=0)
+
+	def install_signal_handler(self, func):
+		self.signal_func = func
+		signal.signal(self.signal, self.signal_handler)
+
+	def signal_handler(self, sig=None, frm=None):
+		if not self.child_sigs: self._child_readline(one_signal=True)
+		while self.child_sigs:
+			line = self.child_sigs.popleft()
+			self.signal_func(line['name'], line['obj'])
+
+
+	def child_start(self, gc_old_one=False):
+		if self._child and gc_old_one:
+			self._child.wait()
+			self._child = None
+		if not self.child_cmd or self._child: return
+		self._child = subprocess.Popen( self.child_cmd,
+			stdout=subprocess.PIPE, stdin=subprocess.PIPE, close_fds=True )
+		self._child_readline(init_line=True) # wait until it's ready
 
 	def child_check_restart(self):
-		if os.waitpid(child_pid, os.WNOHANG)[0]:
-			log.debug('glib/dbus child pid died. restarting it')
-			self.child_start()
-
+		self.child_start()
+		if not self._child: return # can't be started
+		if self._child.poll() is not None:
+			log.debug('glib/dbus child pid (%s) died. restarting it', self._child.pid)
+			self.child_start(gc_old_one=True)
 
 	def _get_bus_address(self):
 		srv_addr = os.environ.get('PULSE_DBUS_SERVER')
@@ -80,7 +112,7 @@ class PAMixerGlibLoop(object):
 					raise
 				subprocess.Popen(
 					['pulseaudio', '--start', '--log-target=syslog'],
-					stdout=open('/dev/null', 'w'), stderr=STDOUT ).wait()
+					stdout=open('/dev/null', 'wb'), stderr=STDOUT ).wait()
 				log.debug('Started new pa-server instance')
 				# from time import sleep
 				# sleep(1) # XXX: still needed?
@@ -90,29 +122,31 @@ class PAMixerGlibLoop(object):
 	def _core_notify(self, path, op):
 		try:
 			os.kill(self.core_pid, self.signal)
-			self._pipe.write('{} {}\n'.format(op, path))
+			self.stdout.write('{} {}\n'.format(op, path))
 		except: loop.quit()
 
-	def _child_run(self):
+	def child_run(self):
 		from dbus.mainloop.glib import DBusGMainLoop
 		from gi.repository import GLib
 		import dbus
 
 		self._dbus = dbus
 
-		os.close(fd_out)
-		self._pipe = io.open(fd_in, 'wb', buffering=0)
-		self._pipe.write('\n') # wait for main process to get ready
+		# Disable stdin/stdout buffering
+		sys.stdout = io.open(sys.stdout.fileno(), 'wb', buffering=0)
+		sys.stdin = io.open(sys.stdin.fileno(), 'rb', buffering=0)
+
+		sys.stdout.write('ready\n') # wait for main process to get ready, signal readiness
 		log.debug('DBus signal handler thread started')
 
 		DBusGMainLoop(set_as_default=True)
 		loop = GLib.MainLoop()
-		signal.signal(self.signal, lambda sig, frm: loop.quit())
 
-		# XXX: also need pipe in other direction with its fd in glib loop
 		while True:
 			bus = self._get_bus()
 			core = bus.get_object(object_path='/org/pulseaudio/core1')
+			# XXX: import stdin fd here, add rpc handling of lines there
+			# XXX: self._core_notify
 			for sig_name, sig_handler in (
 					('NewSink', ft.partial(notify, op='^')),
 					('SinkRemoved', ft.partial(notify, op='v')),
@@ -123,33 +157,65 @@ class PAMixerGlibLoop(object):
 					'org.PulseAudio.Core1.{}'.format(sig_name), dbus.Array(signature='o') )
 			loop.run()
 
-		raise RuntimeError('Child code broke out of the loop') # should never get here
+		raise RuntimeError('Child code broke out of the loop, this is a bug.')
+
+
+
+class PAMixerMenuItem(object):
+
+	@property
+	def muted(self): bool
+
+	@muted.setter
+	def muted(self, flag): None
+
+	@property
+	def volume(self): float
+
+	@volume.setter
+	def volume(self, level): None
+
+	def volume_change(self, delta): float
+
+	def pick_next(self): PAMixerMenuItem
+	def pick_prev(self): PAMixerMenuItem
+
+
+class PAMixerMenu(object):
+
+	@property
+	def max_key_len(self): int
+
+	def item_list(self): iterable
+
+	def update_signal(self, name, obj): None
+
+
 
 
 
 class PAMixerUIUpdate(Exception): pass # XXX: not needed here?
 
-class PAMixerUI(object): pass
+class PAMixerUI(object):
 
 	item_len_min = 10
 	bar_len_min = 10
 	bar_caps_func = lambda bar='': ' [ ' + bar + ' ]'
+	border = 1
 
-	def __init__(self): pass
-
-
-	# All things curses
+	def __init__(self, menu):
+		self.menu = menu
 
 	def c_win_init(self):
 		win = self.c.newwin(*self.c_win_size())
 		win.keypad(True)
 		return win
 
-	def c_win_size(self, border):
+	def c_win_size(self):
 		'Returns "nlines, ncols, begin_y, begin_x" for e.g. newwin(), taking border into account.'
 		size = self.c_stdscr.getmaxyx()
-		nlines, ncols = max(1, size[0] - 2 * border), max(1, size[1] - 2 * border)
-		return nlines, ncols, min(border, size[0]), min(border, size[1])
+		nlines, ncols = max(1, size[0] - 2 * self.border), max(1, size[1] - 2 * self.border)
+		return nlines, ncols, min(self.border, size[0]), min(self.border, size[1])
 
 	def c_win_draw(self, win, items, hl=None):
 		win_rows, win_len = win.getmaxyx()
@@ -181,9 +247,12 @@ class PAMixerUI(object): pass
 					bar = self.bar_caps_func('#' * bar_fill + '-' * (bar_len - bar_fill))
 					win.addstr(row, item_len_max + mute_button_len, bar)
 
+	def c_key(self, k):
+		if len(k) == 1: return ord(k)
+		return getattr(self.c, 'key_{}'.format(k).upper())
 
-	def _run(self, stdscr, items, border):
-		c, self.c_stdscr = self.c, stdscr
+	def _run(self, stdscr): # XXX: convert "items" to whatever self.menu interface
+		c, k, self.c_stdscr = self.c, self.c_key, stdscr
 
 		c.curs_set(0)
 		c.use_default_colors()
@@ -193,20 +262,18 @@ class PAMixerUI(object): pass
 		optz.adjust_step /= 100.0
 
 		while True:
-			self.child_check_restart()
+			glib_thing.child_check_restart() # XXX: proxy via menu? do it there implicitly?
 
-			while items.updates: items.update()
-			if not items: items.refresh()
-			try: self.c_win_draw(win, items, hl=hl)
-			except PAMixerUIUpdate: continue
-			if items.updates: continue
+			try: self.c_win_draw(win, items, hl=hl) # XXX: pass iter here, or don't pass menu obj at all
+			except PAMixerUIUpdate: continue # XXX: not needed anymore?
 
 			try: key = win.getch()
 			except c.error: continue
 			log.debug('Keypress event: %s', key)
 
 			try:
-				if key in (c.KEY_DOWN, ord('j'), ord('n')): hl = items.next_key(hl)
+				# XXX: add 1-0 keys' handling to set level here
+				if key in [k('down'), k('j'), k('n')]: hl = items.next_key(hl)
 				elif key in (c.KEY_UP, ord('k'), ord('p')): hl = items.prev_key(hl)
 				elif key in (c.KEY_LEFT, ord('h'), ord('b')):
 					items.set_volume(hl, items.get_volume(hl) - optz.adjust_step)
@@ -222,12 +289,18 @@ class PAMixerUI(object): pass
 			except PAMixerUIUpdate: continue
 
 
-	def run(self, stdscr, items, border=1):
+	def run(self, items):
 		import curses # has a ton of global state
 		self.c = curses
-		self.c.wrapper(self._run, items=items, border=border)
+		self.c.wrapper(self._run, items=items)
 
 
+
+def self_exec_cmd(*args):
+	'Returns list of [binary, args ...] to run this script with provided args.'
+	args = [__file__] + list(args)
+	if os.access(__file__, os.X_OK): return args
+	return [sys.executable or 'python'] + args
 
 def main(args=None):
 	import argparse
@@ -254,8 +327,19 @@ def main(args=None):
 
 	parser.add_argument('--debug', action='store_true',
 		default=defaults['debug'], help='Verbose operation mode.')
+	parser.add_argument('--child-pid-do-not-use', action='store_true',
+		help='Used internally to spawn dbus sub-pid, should not be used directly.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	if opts.child_pid_do_not_use:
+		try: PAMixerDBusBridge().child_run()
+		except PAMixerDBusBridgeError:
+			argv = self_exec_cmd(sys.argv)
+			os.closerange(3, max(map(int, os.listdir('/proc/self/fd'))) + 1)
+			os.execvp(argv[0], argv)
+		raise RuntimeError( 'PAMixerDBusBridge.child_run() has'
+			' returned unexpectedly (should be an endless loop or exception).' )
 
 	global log
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
@@ -267,6 +351,14 @@ def main(args=None):
 	except (OSError, IOError) as err:
 		log.debug('Not processing config file %r: %s %s', conf_file, type(err), err)
 	else: update_conf_from_file(conf, conf_file)
+
+	dbus_bridge = PAMixerDBusBridge(self_exec_cmd('--child-pid-do-not-use'])
+	menu = PAMixerMenu(dbus_bridge)
+
+	dbus_bridge.install_signal_handler(menu.update_signal)
+	dbus_bridge.child_start()
+
+	ui = PAMixerUI(menu)
 
 
 
