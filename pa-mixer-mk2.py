@@ -10,12 +10,12 @@ import json, subprocess, signal, fcntl, base64, hashlib
 
 
 class Conf(object):
+	def __repr__(self): return repr(vars(self))
 
 	adjust_step = 5
 	max_level = 2 ** 16
 	use_media_name = False
 	verbose = False
-	debug = False
 
 def update_conf_from_file(conf, path_or_file):
 	if isinstance(path_or_file, types.StringTypes): path_or_file = io.open(path_or_file)
@@ -88,6 +88,7 @@ class PAMixerDBusBridge(object):
 			with signal sent to parent pid on any dbus async event (e.g. signal) from child.'''
 
 	signal = signal.SIGUSR1 # used to break curses loop in the parent pid
+	log_pipes = False # very noisy, but useful to see all chatter between parent/child
 
 	def __init__(self, child_cmd=None, fatal=False):
 		self.child_cmd, self.core_pid, self.fatal = child_cmd, os.getppid(), fatal
@@ -105,7 +106,7 @@ class PAMixerDBusBridge(object):
 			if init_line:
 				assert line.strip() == 'ready', repr(line)
 				break
-			log.debug('rpc-parent << %r', line)
+			if self.log_pipes: log.debug('rpc-parent(raw) << %r', line)
 			line = json.loads(line)
 			if line['t'] == 'signal':
 				self.child_sigs.append(line)
@@ -123,7 +124,7 @@ class PAMixerDBusBridge(object):
 		assert '\n' not in call, repr(call)
 		for n in xrange(2): # even 2 is kinda generous - likely to be some bug
 			try:
-				log.debug('rpc-parent >> %r', call)
+				if self.log_pipes: log.debug('rpc-parent(raw) >> %r', call)
 				self._child.stdin.write('{}\n'.format(call))
 				res = self._child_readline(wait_for_cid=cid)
 			except Exception as err:
@@ -163,7 +164,7 @@ class PAMixerDBusBridge(object):
 	def child_kill(self):
 		if self._child:
 			child, self._child = self._child, None
-			self._child_gc.append(child.pid)
+			self._child_gc.add(child.pid)
 			try: child.kill() # no need to be nice here
 			except OSError: pass
 
@@ -209,6 +210,11 @@ class PAMixerDBusBridge(object):
 				srv_addr = False # to avoid endless loop
 		return self._dbus.connection.Connection(srv_addr)
 
+	def _dbus_val(self, args, translate=None):
+		if translate == 'volume':
+			args[-1] = list(self._dbus.UInt32(round(v)) for v in args[-1])
+		return args
+
 
 	def _loop_exc_stop(self, exc_info=None):
 		self.loop_exc = exc_info or sys.exc_info()
@@ -229,7 +235,7 @@ class PAMixerDBusBridge(object):
 	@_glib_err_wrap
 	def _core_notify(self, _signal=False, **kws):
 		chunk = dict(**kws)
-		log.debug('rpc-child >> %s', chunk)
+		if self.log_pipes: log.debug('rpc-child(py) >> %s', chunk)
 		chunk = json.dumps(chunk)
 		assert '\n' not in chunk, chunk
 		try:
@@ -249,7 +255,6 @@ class PAMixerDBusBridge(object):
 			while True:
 				chunk = self.stdin.read(2**20)
 				if not chunk: break
-				# log.debug('rpc-child-raw << %r', chunk)
 				buff.append(chunk)
 			while True:
 				# Detect if there are any full requests buffered
@@ -267,16 +272,19 @@ class PAMixerDBusBridge(object):
 					assert '\n' not in chunk, chunk
 					req.append(chunk)
 				req = json.loads(''.join(req))
-				log.debug('rpc-child << %s', req)
+				if self.log_pipes: log.debug('rpc-child(py) << %s', req)
 
 				# Run dbus call and return the result, synchronously
 				assert req['t'] == 'call', req
 				func, kws = req['func'], dict()
 				obj_path, iface = req.get('obj'), req.get('iface')
+				args, translate = req['args'], req.get('translate')
 				if iface: kws['dbus_interface'] = dbus_abbrev(iface)
+				if translate: args = self._dbus_val(args, translate)
 				obj = self.core if not obj_path\
 					else self.bus.get_object(object_path=obj_path) # XXX: bus gone handling
-				try: res = getattr(obj, func)(*req['args'], **kws)
+				log.debug('DBus call: %s %s %s', func, args, kws)
+				try: res = getattr(obj, func)(*args, **kws)
 				except self._dbus.exceptions.DBusException as err:
 					self._core_notify( t='call_error', cid=req['cid'],
 						err_type=err.get_dbus_name(), err_msg=err.message )
@@ -392,17 +400,18 @@ class PAMixerMenuItem(object):
 		return self._get_name_unique(self.t)
 
 
-	def _dbus_prop(name, dbus_name=None):
+	def _dbus_prop(name, dbus_name=None, translate=None):
 		dbus_name = dbus_name or name.title()
 		def dbus_prop_get(self):
 			return self.call('Get', [self.dbus_type, dbus_name], obj=self.dbus_path, iface='props')
 		def dbus_prop_set(self, val):
-			return self.call('Set', [self.dbus_type, dbus_name, val], obj=self.dbus_path, iface='props')
+			return self.call( 'Set', [self.dbus_type, dbus_name, val],
+				obj=self.dbus_path, iface='props', translate=translate )
 		return property( dbus_prop_get, dbus_prop_set,
 			lambda: None, 'DBus {} property proxy'.format(dbus_name) )
 
 	muted = _dbus_prop('mute')
-	volume_chans = _dbus_prop('volume') # tuple of ints (absolute values, as returned by PA)
+	volume_chans = _dbus_prop('volume', translate='volume') # tuple of uints
 
 	@property
 	def volume(self):
@@ -412,8 +421,9 @@ class PAMixerMenuItem(object):
 		return min(1.0, volume_abs / float(self.conf.max_level))
 	@volume.setter
 	def volume(self, val):
-		chans = len(self.volume_abs)
-		self.volume_abs = [int(val * self.conf.max_level)] * chans
+		log.debug('Setting volume: %s', val)
+		val, chans = min(1.0, max(0, val)), len(self.volume_chans)
+		self.volume_chans = [int(val * self.conf.max_level)] * chans
 
 	def muted_toggle(self): self.muted = not self.muted
 	def volume_change(self, delta): self.volume += delta
@@ -555,20 +565,21 @@ class PAMixerUI(object):
 			try: key = win.getch()
 			except KeyboardInterrupt: key = self.c_key('q')
 			except c.error: continue
-			log.debug('Keypress event: %s', key)
+			log.debug('Keypress event: %s (%r)', key, c.keyname(key))
 
 			try:
 				# XXX: add 1-0 keys' handling to set level here
 				if key_match(key, 'up', 'k', 'p'): item_hl = item_hl.get_prev()
 				elif key_match(key, 'down', 'j', 'n'): item_hl = item_hl.get_next()
-				elif key_match('left', 'h', 'b'): item_hl.volume_change(-self.conf.adjust_step)
-				elif key_match('right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
-				elif key_match(' ', 'm'): item_hl.muted_toggle()
-				elif key_match('resize', '\f'):
+				elif key_match(key, 'left', 'h', 'b'):
+					item_hl.volume_change(-self.conf.adjust_step)
+				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
+				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
+				elif key_match(key, 'resize', '\f'):
 					c.endwin()
 					stdscr.refresh()
 					win = self.c_win_init()
-				elif key < 255 and key > 0 and chr(key) == 'q': break
+				elif key_match(key, 'q'): break
 			except PAMixerUIUpdate: continue # XXX: not needed anymore?
 
 	def run(self):
@@ -609,8 +620,9 @@ def main(args=None):
 		action='store_true', default=conf.verbose,
 		help='Dont close stderr to see any sort of errors (which'
 			' mess up curses interface, thus silenced that way by default).')
-	parser.add_argument('--debug', action='store_true',
-		default=conf.debug, help='Verbose operation mode.')
+	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	parser.add_argument('--debug-pipes', action='store_true',
+		help='Also logs chatter between parent/child pids. Very noisy, only useful with --debug.')
 	parser.add_argument('--fatal', action='store_true',
 		help='Dont try too hard to recover from errors. For debugging purposes only.')
 
@@ -621,14 +633,15 @@ def main(args=None):
 	for k,v in vars(opts).viewitems(): setattr(conf, k, v)
 	opts = conf # to make sure there's no duality of any kind
 
-	global log
+	global log, print
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
+	print = ft.partial(print, file=sys.stderr) # stdout is used by curses or as a pipe (child)
 
 	if opts.child_pid_do_not_use:
-		global print
-		print = ft.partial(print, file=sys.stderr)
-		try: return PAMixerDBusBridge().child_run()
+		dbus_bridge = PAMixerDBusBridge()
+		if opts.debug_pipes: dbus_bridge.log_pipes = True
+		try: return dbus_bridge.child_run()
 		except PAMixerDBusBridgeError as err:
 			log.info('PAMixerDBusBridgeError event in a child pid: %s', err)
 			argv = self_exec_cmd(sys.argv)
@@ -636,13 +649,17 @@ def main(args=None):
 			os.execvp(*argv)
 
 	dbus_bridge = ['--child-pid-do-not-use']
-	if opts.debug: dbus_bridge += ['--debug']
+	if opts.debug:
+		dbus_bridge += ['--debug']
+		if opts.debug_pipes: dbus_bridge += ['--debug-pipes']
 	dbus_bridge = PAMixerDBusBridge(self_exec_cmd(*dbus_bridge), fatal=opts.fatal)
+	if opts.debug_pipes: dbus_bridge.log_pipes = True
 	menu = PAMixerMenu(dbus_bridge, conf, fatal=opts.fatal)
 	dbus_bridge.install_signal_handler(menu.update_signal)
 	dbus_bridge.child_start()
 
 	with PAMixerUI(menu) as curses_ui:
+		if not opts.verbose and not opts.debug: sys.stderr.close() # any output will mess-up curses ui
 		log.debug('Starting curses ui loop...')
 		curses_ui.run()
 		log.debug('Finished')
