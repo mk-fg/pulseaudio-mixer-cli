@@ -450,12 +450,23 @@ class PAMixerMenu(object):
 	def item_list(self):
 		obj_paths_seen = set()
 		for obj_type, prop in [('sink', 'Sinks'), ('stream', 'PlaybackStreams')]:
-			'Get', [dbus_abbrev('pulse'), prop], 'props'
 			for obj_path in self.call('Get', [dbus_abbrev('pulse'), prop], iface='props'):
 				obj_paths_seen.add(obj_path)
 				if obj_path not in self.items:
 					self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
 		for obj_path in set(self.items).difference(obj_paths_seen): del self.items[obj_path]
+
+		# Sort sinks to be always on top
+		sinks, streams, ordered = list(), list(), True
+		for obj_path, item in self.items.viewitems():
+			if item.t == 'sink':
+				if streams: ordered = False
+				sinks.append((obj_path, item))
+			else: streams.append((obj_path, item))
+		if not ordered:
+			self.items.clear()
+			for obj_path, item in it.chain(sinks, streams): self.items[obj_path] = item
+
 		return self.items.values()
 
 	def item_after(self, item=None):
