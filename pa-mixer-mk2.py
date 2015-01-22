@@ -17,6 +17,7 @@ class Conf(object):
 	min_level = 0 # absolute value (as used in PA), displayed as "0%"
 	use_media_name = False
 	placeholder_media_names = 'audio stream', 'AudioStream'
+	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
 
 def update_conf_from_file(conf, path_or_file):
@@ -497,13 +498,17 @@ class PAMixerUI(object):
 
 
 	def c_win_init(self):
-		win = self.c.newwin(*self.c_win_size())
+		# Used to create a window with borders here,
+		#  but these borders don't seem to be cleared properly.
+		# So using stdscr now, and painting borders in the app.
+		win = self.c_stdscr
 		win.keypad(True)
+		win.bkgdset(' ')
 		return win
 
-	def c_win_size(self):
-		'Returns "nlines, ncols, begin_y, begin_x" for e.g. newwin(), taking border into account.'
-		size = self.c_stdscr.getmaxyx()
+	def c_win_size(self, win):
+		'Returns "nlines, ncols, begin_y, begin_x", taking border into account.'
+		size = win.getmaxyx()
 		nlines, ncols = max(1, size[0] - 2 * self.border), max(1, size[1] - 2 * self.border)
 		return nlines, ncols, min(self.border, size[0]), min(self.border, size[1])
 
@@ -511,19 +516,24 @@ class PAMixerUI(object):
 		win.erase()
 		if not items: return
 
-		win_rows, win_len = win.getmaxyx()
+		win_rows, win_len, pad_x, pad_y = self.c_win_size(win)
 		if win_len <= 1: return # nothing fits
 
 		# Fit stuff vertically
 		if win_rows < len(items) + 1: # pick/display items near highlighted one
-			pos, offset = items.find(item_hl), 1
-			items_fit = {pos: item}
+			pos, offset = items.index(item_hl), 1
+			items, items_fit = dict(enumerate(items)), {pos: items[pos]}
 			while True:
-				for p in pos + offset, pos - offset:
-					try: items_fit[p] = items[p]
-					except IndexError: continue
+				ps = list(p for p in [pos + offset, pos - offset] if p in items)
+				if not ps: break
+				for p in ps:
+					items_fit[p] = items[p]
 					if win_rows <= len(items_fit) + 1: break
-			items = items_fit
+				else:
+					offset += 1
+					continue
+				break
+			items = map(op.itemgetter(1), sorted(items_fit.viewitems(), key=op.itemgetter(0)))
 
 		# Fit stuff horizontally
 		item_len_max = max(len(item.name) for item in items)
@@ -538,19 +548,22 @@ class PAMixerUI(object):
 
 		for row, item in enumerate(items):
 			if row >= win_rows - 1: break # not sure why bottom window row seem to be unusable
+			row += pad_y
 
 			attrs = self.c.A_REVERSE if item is item_hl else self.c.A_NORMAL
 
-			win.addstr(row, 0, force_bytes(item.name[:item_len_max]), attrs)
-			if win_len > item_len_max + mute_button_len:
+			win.addstr(row, 0, ' ' * pad_x)
+			win.addstr(row, pad_x, force_bytes(item.name[:item_len_max]), attrs)
+			item_name_end = item_len_max + pad_x
+			if win_len > item_name_end + mute_button_len:
 				if item.muted: mute_button = " M"
 				else: mute_button = " -"
-				win.addstr(row, item_len_max, mute_button)
+				win.addstr(row, item_name_end, mute_button)
 
 				if bar_len > 0:
 					bar_fill = int(round(item.volume * bar_len))
 					bar = self.bar_caps_func('#' * bar_fill + '-' * (bar_len - bar_fill))
-					win.addstr(row, item_len_max + mute_button_len, bar)
+					win.addstr(row, item_name_end + mute_button_len, bar)
 
 	def c_key(self, k):
 		if len(k) == 1: return ord(k)
@@ -592,9 +605,12 @@ class PAMixerUI(object):
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
 
 			if key_match(key, 'resize', '\f'):
-				c.endwin()
-				stdscr.refresh()
-				win = self.c_win_init()
+				if self.conf.overkill_redraw:
+					c.endwin()
+					stdscr.refresh()
+					win = self.c_win_init()
+				else:
+					win.resize(*win.getmaxyx())
 			elif key_match(key, 'q'): break
 
 	def run(self):
