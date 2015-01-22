@@ -9,19 +9,26 @@ import os, sys, io, logging, re, time, types, string
 import json, subprocess, signal, fcntl, base64, hashlib
 
 
-conf_defaults = {
-	'adjust-step': 5, 'max-level': 2 ** 16, 'encoding': 'utf-8',
-	'use-media-name': False, 'verbose': False, 'debug': False }
+class Conf(object):
+
+	adjust_step = 5
+	max_level = 2 ** 16
+	use_media_name = False
+	verbose = False
+	debug = False
 
 def update_conf_from_file(conf, path_or_file):
 	if isinstance(path_or_file, types.StringTypes): path_or_file = io.open(path_or_file)
 	with path_or_file as src:
 		config = configparser.SafeConfigParser(allow_no_value=True)
 		config.readfp(src)
-	for k, v in conf.viewitems():
+	for k in dir(conf):
+		if k.startswith('_'): continue
+		v = getattr(conf, k)
 		get_val = config.getint if not isinstance(v, bool) else config.getboolean
-		try: conf[k] = get_val('default', k)
-		except configparser.Error: pass
+		for k in k, k.replace('_', '-'):
+			try: setattr(conf, k, get_val('default', k))
+			except configparser.Error: pass
 
 
 dbus_abbrevs = dict(
@@ -271,7 +278,7 @@ class PAMixerDBusBridge(object):
 					else self.bus.get_object(object_path=obj_path) # XXX: bus gone handling
 				try: res = getattr(obj, func)(*req['args'], **kws)
 				except self._dbus.exceptions.DBusException as err:
-					self._core_notify( t='call_error', cid=cid,
+					self._core_notify( t='call_error', cid=req['cid'],
 						err_type=err.get_dbus_name(), err_msg=err.message )
 				else:
 					res = strip_dbus_types(res)
@@ -388,11 +395,11 @@ class PAMixerMenuItem(object):
 	def _dbus_prop(name, dbus_name=None):
 		dbus_name = dbus_name or name.title()
 		def dbus_prop_get(self):
-			return self.call('Get', [self.dbus_type, dbus_name], iface='props')
+			return self.call('Get', [self.dbus_type, dbus_name], obj=self.dbus_path, iface='props')
 		def dbus_prop_set(self, val):
-			return self.call('Set', [self.dbus_type, dbus_name, val], iface='props')
+			return self.call('Set', [self.dbus_type, dbus_name, val], obj=self.dbus_path, iface='props')
 		return property( dbus_prop_get, dbus_prop_set,
-			lambda s: None, 'DBus {} property proxy'.format(dbus_name) )
+			lambda: None, 'DBus {} property proxy'.format(dbus_name) )
 
 	muted = _dbus_prop('mute')
 	volume = _dbus_prop('volume')
@@ -406,13 +413,9 @@ class PAMixerMenuItem(object):
 
 class PAMixerMenu(object):
 
-	conf = type('MenuConf', (object,), dict(
-		use_media_name=True,
-		placeholder_media_names=['audio stream', 'AudioStream'],
-	))
-
-	def __init__(self, dbus_bridge, fatal=False):
-		self.call, self.items, self.fatal = dbus_bridge.call, OrderedDict(), fatal
+	def __init__(self, dbus_bridge, conf=None, fatal=False):
+		self.call, self.fatal = dbus_bridge.call, fatal
+		self.conf, self.items = conf or Conf(), OrderedDict()
 
 	def update_signal(self, name, obj):
 		log.debug('update_signal << %s %s', name, obj)
@@ -541,8 +544,7 @@ def self_exec_cmd(*args):
 	return [sys.executable or 'python'] + args
 
 def main(args=None):
-	global log
-	conf = conf_defaults.copy()
+	conf = Conf()
 	conf_file = os.path.expanduser('~/.pulseaudio-mixer-cli.cfg')
 	try: conf_file = io.open(conf_file)
 	except (OSError, IOError) as err: pass
@@ -551,27 +553,23 @@ def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(description='Command-line PulseAudio mixer tool.')
 
-	# parser.add_argument('-a', '--adjust-step',
-	# 	action='store', type=int, metavar='step', default=conf['adjust-step'],
-	# 	help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
-	# parser.add_argument('-l', '--max-level',
-	# 	action='store', type=int, metavar='level', default=conf['max-level'],
-	# 	help='Value to treat as max (default: %(default)s).')
-	# parser.add_argument('-n', '--use-media-name',
-	# 	action='store_true', default=conf['use-media-name'],
-	# 	help='Display streams by "media.name" property, if possible.'
-	# 		' Default is to prefer application name and process properties.')
-	# parser.add_argument('-e', '--encoding',
-	# 	metavar='enc', default=conf['encoding'],
-	# 	help='Encoding to enforce for the output. Any non-decodeable bytes will be stripped.'
-	# 		' Mostly useful with --use-media-name. Default: %(default)s.')
-	# parser.add_argument('-v', '--verbose',
-	# 	action='store_true', default=conf['verbose'],
-	# 	help='Dont close stderr to see any sort of errors (which'
-	# 		' mess up curses interface, thus silenced that way by default).')
+	parser.add_argument('-a', '--adjust-step',
+		action='store', type=int, metavar='step', default=conf.adjust_step,
+		help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
+	parser.add_argument('-l', '--max-level',
+		action='store', type=int, metavar='level', default=conf.max_level,
+		help='Value to treat as max (default: %(default)s).')
+	parser.add_argument('-n', '--use-media-name',
+		action='store_true', default=conf.use_media_name,
+		help='Display streams by "media.name" property, if possible.'
+			' Default is to prefer application name and process properties.')
 
+	parser.add_argument('-v', '--verbose',
+		action='store_true', default=conf.verbose,
+		help='Dont close stderr to see any sort of errors (which'
+			' mess up curses interface, thus silenced that way by default).')
 	parser.add_argument('--debug', action='store_true',
-		default=conf['debug'], help='Verbose operation mode.')
+		default=conf.debug, help='Verbose operation mode.')
 	parser.add_argument('--fatal', action='store_true',
 		help='Dont try too hard to recover from errors. For debugging purposes only.')
 
@@ -579,6 +577,7 @@ def main(args=None):
 		help='Used internally to spawn dbus sub-pid, should not be used directly.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
+	global log
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
@@ -595,19 +594,14 @@ def main(args=None):
 	dbus_bridge = ['--child-pid-do-not-use']
 	if opts.debug: dbus_bridge += ['--debug']
 	dbus_bridge = PAMixerDBusBridge(self_exec_cmd(*dbus_bridge), fatal=opts.fatal)
-	menu = PAMixerMenu(dbus_bridge, fatal=opts.fatal)
+	menu = PAMixerMenu(dbus_bridge, conf, fatal=opts.fatal)
 	dbus_bridge.install_signal_handler(menu.update_signal)
 	dbus_bridge.child_start()
+	curses_ui = PAMixerUI(menu)
 
-	print(menu.item_list)
-	print(menu.item_len_max)
-	exit()
-
-	# curses_ui = PAMixerUI(menu)
-
-	# log.debug('Starting curses ui loop...')
-	# curses_ui.run()
-	# log.debug('Finished')
+	log.debug('Starting curses ui loop...')
+	curses_ui.run()
+	log.debug('Finished')
 
 
 if __name__ == '__main__': sys.exit(main())
