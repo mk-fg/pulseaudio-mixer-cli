@@ -65,11 +65,22 @@ Usage
 	                        default).
 	  --debug               Verbose operation mode.
 
-That's basically how it looks (sink levels always displayed on top):
+That's basically how it looks... in an overly narrow terminal (to fit on a github
+page), and without "inverted row" selection visible:
 
-	ALC269VB Analog (analog-stereo@snd_hda_intel)            - [ ############################---------- ]
-	ALSA plug-in [plugin-container] (fraggod@sacrilege:2914) - [ ##################-------------------- ]
-	MPlayer (fraggod@sacrilege:5686)                         - [ ############-------------------------- ]
+	HDMI 0 (hdmi-stereo@snd_hda_intel)                - [ ############################### ]
+	ID 440 Analog (analog-stereo@snd_hda_intel)       - [ ##########################----- ]
+	mpv - Bax - Perceptions 206 on ETN.fm Jan-22-2015 - [ #########---------------------- ]
+	VLC media player (fraggod@malediction:24321)      - [ ##############----------------- ]
+	Skype (fraggod@malediction:24202)                 - [ #################-------------- ]
+	ALSA Playback                                     M [ #######------------------------ ]
+
+Sink levels always displayed on top, "M" or "-" to the left of the bar is a mute
+indicator.
+
+Controls are arrow keys (incl. numpad) or their vi/emacs-style counterparts, "m"
+or "space" to toggle mute and 1-0 "number row" keys to set level (1=0%, 0=100%,
+only in pa-mixer-mk2), "q" to quit.
 
 Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg" (see
 [ConfigParser docs](http://docs.python.org/2/library/configparser.html) for more

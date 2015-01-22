@@ -16,7 +16,7 @@ class Conf(object):
 	max_level = 2 ** 16 # absolute value (as used in PA), displayed as "100%"
 	min_level = 0 # absolute value (as used in PA), displayed as "0%"
 	use_media_name = False
-	placeholder_media_names = 'audio stream', 'AudioStream'
+	placeholder_media_names = 'audio stream', 'AudioStream', 'Output'
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
 
