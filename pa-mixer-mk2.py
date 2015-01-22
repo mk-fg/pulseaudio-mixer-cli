@@ -3,10 +3,10 @@
 from __future__ import print_function
 
 import itertools as it, operator as op, functools as ft
-from collections import deque
+from collections import deque, OrderedDict
 import ConfigParser as configparser
-import os, sys, io, logging, re, time, types
-import json, subprocess, signal, fcntl, base64
+import os, sys, io, logging, re, time, types, string
+import json, subprocess, signal, fcntl, base64, hashlib
 
 
 conf_defaults = {
@@ -24,6 +24,52 @@ def update_conf_from_file(conf, path_or_file):
 		except configparser.Error: pass
 
 
+dbus_abbrevs = dict(
+	pulse='org.PulseAudio.Core1',
+	props='org.freedesktop.DBus.Properties' )
+dbus_abbrev = lambda k: dbus_abbrevs.get(k, k)
+dbus_join = lambda *parts: '.'.join(map(dbus_abbrev, parts[:-1]) + parts[-1])
+
+
+def dbus_bytes(dbus_arr, strip='\0' + string.whitespace):
+	return bytes(bytearray(dbus_arr).strip(strip))
+
+def strip_dbus_types(data):
+	# Necessary because dbus types subclass python types,
+	#  yet don't serialize in the same way - e.g. str(dbus.Byte(1)) is '\x01'
+	#  (and not '1') - which messes up simple serializers like "json" module.
+	sdt = strip_dbus_types
+	if isinstance(data, dict): return dict((sdt(k), sdt(v)) for k,v in data.viewitems())
+	elif isinstance(data, (list, tuple)):
+		if data.signature == 'y': return dbus_bytes(data)
+		return map(sdt, data)
+	elif isinstance(data, types.NoneType): return data
+	for t in int, long, unicode, bytes, bool:
+		if isinstance(data, t): return t(data)
+	raise ValueError(( 'Failed to sanitize data type:'
+		' {} (mro: {}, value: {})' ).format(type(data), type(data).mro(), data))
+
+
+def uid_str(seed=None, length=4):
+	seed_bytes = length * 6 / 8
+	assert seed_bytes * 8 / 6 == length, [length, seed_bytes]
+	if seed is None: seed = os.urandom(seed_bytes)
+	else: seed = hashlib.sha256(seed).digest()[:seed_bytes]
+	return base64.urlsafe_b64encode(seed)
+
+def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
+	if isinstance(bytes_or_unicode, bytes): return bytes_or_unicode
+	return bytes_or_unicode.encode(encoding, errors)
+
+def force_unicode(bytes_or_unicode, encoding='utf-8', errors='replace'):
+	if isinstance(bytes_or_unicode, unicode): return bytes_or_unicode
+	return bytes_or_unicode.decode(encoding, errors)
+
+def to_bytes(obj, **conv_kws):
+	if not isinstance(obj, types.StringTypes): obj = bytes(obj)
+	return force_bytes(obj)
+
+
 class PAMixerDBusBridgeError(Exception): pass
 class PAMixerDBusError(Exception): pass
 
@@ -36,8 +82,8 @@ class PAMixerDBusBridge(object):
 
 	signal = signal.SIGUSR1 # used to break curses loop in the parent pid
 
-	def __init__(self, child_cmd=None):
-		self.child_cmd, self.core_pid = child_cmd, os.getppid()
+	def __init__(self, child_cmd=None, fatal=False):
+		self.child_cmd, self.core_pid, self.fatal = child_cmd, os.getppid(), fatal
 		self.child_sigs, self.child_calls, self._child, self._child_gc = deque(), dict(), None, set()
 
 
@@ -52,6 +98,7 @@ class PAMixerDBusBridge(object):
 			if init_line:
 				assert line.strip() == 'ready', repr(line)
 				break
+			log.debug('rpc-parent << %r', line)
 			line = json.loads(line)
 			if line['t'] == 'signal':
 				self.child_sigs.append(line)
@@ -60,7 +107,7 @@ class PAMixerDBusBridge(object):
 
 	def call(self, func, args, **call_kws):
 		self.child_check_restart()
-		cid = base64.urlsafe_b64encode(os.urandom(3))
+		cid = uid_str()
 		call = dict(t='call', cid=cid, func=func, args=args, **call_kws)
 		try: call = json.dumps(call)
 		except Exception as err:
@@ -69,10 +116,12 @@ class PAMixerDBusBridge(object):
 		assert '\n' not in call, repr(call)
 		for n in xrange(2): # even 2 is kinda generous - likely to be some bug
 			try:
+				log.debug('rpc-parent >> %r', call)
 				self._child.stdin.write('{}\n'.format(call))
 				res = self._child_readline(wait_for_cid=cid)
 			except Exception as err:
 				log.exception('Failure communicating with child pid, restarting it: %s', err)
+				if self.fatal: break
 				self.child_kill()
 				self.child_check_restart()
 			else: break
@@ -162,21 +211,25 @@ class PAMixerDBusBridge(object):
 	def _glib_err_wrap(func):
 		@ft.wraps(func)
 		def _wrapper(self, *args, **kws):
-			try: return func(self, *args, **kws)
-			except: self._loop_exc_stop()
+			try: func(self, *args, **kws)
+			except Exception as err:
+				exc_info = sys.exc_info()
+				log.exception('glib handler failed: %s', err)
+				self._loop_exc_stop(exc_info)
+			return True # glib disables event handler otherwise
 		return _wrapper
 
 	@_glib_err_wrap
 	def _core_notify(self, _signal=False, **kws):
 		chunk = dict(**kws)
-		log.debug('dbus-io >> %s', chunk)
+		log.debug('rpc-child >> %s', chunk)
 		chunk = json.dumps(chunk)
 		assert '\n' not in chunk, chunk
 		try:
 			if _signal: os.kill(self.core_pid, self.signal)
 			self.stdout.write('{}\n'.format(chunk))
 		except (OSError, IOError):
-			self.loop.quit() # parent is gone, we're done too
+			return self.loop.quit() # parent is gone, we're done too
 
 	@_glib_err_wrap
 	def _rpc_call(self, buff, stream=None, ev=None):
@@ -184,11 +237,12 @@ class PAMixerDBusBridge(object):
 
 		if ev is None: ev = self._gobj.IO_IN
 		if ev & (self._gobj.IO_ERR | self._gobj.IO_HUP):
-			raise PAMixerDBusBridgeError('Stdin pipe from parent pid has been closed')
+			return self.loop.quit() # parent is gone, we're done too
 		elif ev & self._gobj.IO_IN:
 			while True:
 				chunk = self.stdin.read(2**20)
 				if not chunk: break
+				# log.debug('rpc-child-raw << %r', chunk)
 				buff.append(chunk)
 			while True:
 				# Detect if there are any full requests buffered
@@ -206,13 +260,13 @@ class PAMixerDBusBridge(object):
 					assert '\n' not in chunk, chunk
 					req.append(chunk)
 				req = json.loads(''.join(req))
-				log.debug('dbus-io << %s', req)
+				log.debug('rpc-child << %s', req)
 
 				# Run dbus call and return the result, synchronously
 				assert req['t'] == 'call', req
 				func, kws = req['func'], dict()
 				obj_path, iface = req.get('obj'), req.get('iface')
-				if iface: kws['dbus_interface'] = iface
+				if iface: kws['dbus_interface'] = dbus_abbrev(iface)
 				obj = self.core if not obj_path\
 					else self.bus.get_object(object_path=obj_path) # XXX: bus gone handling
 				try: res = getattr(obj, func)(*req['args'], **kws)
@@ -220,7 +274,8 @@ class PAMixerDBusBridge(object):
 					self._core_notify( t='call_error', cid=cid,
 						err_type=err.get_dbus_name(), err_msg=err.message )
 				else:
-					self._core_notify(t='call_result', cid=req['cid'], val=res) # XXX: encoding of val here?
+					res = strip_dbus_types(res)
+					self._core_notify(t='call_result', cid=req['cid'], val=res)
 		else:
 			log.warn('Unrecognized event type from glib: %r', ev)
 
@@ -274,36 +329,105 @@ class PAMixerDBusBridge(object):
 
 class PAMixerMenuItem(object):
 
-	@property
-	def muted(self): bool
+	dbus_types = dict(sink='Device', stream='Stream')
 
-	@muted.setter
-	def muted(self, flag): None
+	def __init__(self, menu, obj_type, obj_path):
+		self.menu, self.t, self.conf, self.call = menu, obj_type, menu.conf, menu.call
+		self.dbus_path, self.dbus_type = obj_path, dbus_join('pulse', [self.dbus_types[self.t]])
+		self.name = self._get_name()
 
-	@property
-	def volume(self): float
+	def __repr__(self):
+		return '<{}[{:x}] {}[{}]: {}>'.format(
+			self.__class__.__name__, id(self), self.t, uid_str(self.dbus_path), self.name )
 
-	@volume.setter
-	def volume(self, level): None
 
-	def volume_change(self, delta): float
+	def _get_name_unique(self, name):
+		return '{} #{}'.format(force_bytes(name), uid_str())
 
-	def pick_next(self): PAMixerMenuItem
-	def pick_prev(self): PAMixerMenuItem
+	def _get_name_descriptive(self):
+		'Can probably fail with KeyError if something is really wrong with stream/device props.'
+		props = self.call('Get', [self.dbus_type, 'PropertyList'], obj=self.dbus_path, iface='props')
+
+		if self.t == 'stream':
+			if self.conf.use_media_name:
+				name = props.get('media.name')
+				if name and name not in self.conf.placeholder_media_names: return name
+			try: name = props['application.name']
+			except KeyError: # some synthetic stream with non-descriptive name
+				name = self._get_name_unique(props['media.name'])
+			ext = '({application.process.user}@'\
+				'{application.process.host}:{application.process.id})'
+
+		elif self.t == 'sink':
+			name = props.get('alsa.id')
+			if not name:
+				try: name = '{}.{}'.format(props['device.api'], props['device.string'])
+				except KeyError:
+					self._get_name_unique(props['device.description'])
+			ext = '({device.profile.name}@{alsa.driver_name})'
+
+		else: raise KeyError('Unknown menu-item type (for naming): {}'.format(self.t))
+
+		try:
+			name = '{} {}'.format( name,
+				re.sub(r'\{([^}]+)\}', r'{}', ext).format(
+					*op.itemgetter(*re.findall(r'\{([^}]+)\}', ext))(props) ) )
+		except KeyError as err:
+			log.debug( 'Unable to get extended descriptive name'
+				' (trype: %r, path: %s) due to missing key: %s', self.t, self.dbus_path, err )
+		return name
+
+	def _get_name(self):
+		try: return self._get_name_descriptive()
+		except Exception as err:
+			if self.menu.fatal: raise
+			log.info('Failed to get descriptive name for %r: %s', self.t, self.dbus_path)
+		return self._get_name_unique(self.t)
+
+
+	def _dbus_prop(name, dbus_name=None):
+		dbus_name = dbus_name or name.title()
+		def dbus_prop_get(self):
+			return self.call('Get', [self.dbus_type, dbus_name], iface='props')
+		def dbus_prop_set(self, val):
+			return self.call('Set', [self.dbus_type, dbus_name, val], iface='props')
+		return property( dbus_prop_get, dbus_prop_set,
+			lambda s: None, 'DBus {} property proxy'.format(dbus_name) )
+
+	muted = _dbus_prop('mute')
+	volume = _dbus_prop('volume')
+
+	def volume_change(self, delta): self.volume += delta
+
+
+	def pick_next(self): PAMixerMenuItem # XXX
+	def pick_prev(self): PAMixerMenuItem # XXX
 
 
 class PAMixerMenu(object):
 
-	def __init__(self, dbus_bridge):
-		self.dbus_bridge = dbus_bridge
+	conf = type('MenuConf', (object,), dict(
+		use_media_name=True,
+		placeholder_media_names=['audio stream', 'AudioStream'],
+	))
+
+	def __init__(self, dbus_bridge, fatal=False):
+		self.call, self.items, self.fatal = dbus_bridge.call, OrderedDict(), fatal
 
 	def update_signal(self, name, obj):
-		log.debug('update_signal %s %s', name, obj)
+		log.debug('update_signal << %s %s', name, obj)
 
 	@property
-	def max_key_len(self): int
+	def item_list(self):
+		for obj_type, prop in [('sink', 'Sinks'), ('stream', 'PlaybackStreams')]:
+			'Get', [dbus_abbrev('pulse'), prop], 'props'
+			for obj_path in self.call('Get', [dbus_abbrev('pulse'), prop], iface='props'):
+				self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
+		return self.items.values()
 
-	def item_list(self): iterable
+	@property
+	def item_len_max(self):
+		return max(len(item.name) for item in self.item_list)
 
 
 
@@ -403,7 +527,6 @@ class PAMixerUI(object):
 					win = self.c_win_init()
 			except PAMixerUIUpdate: continue
 
-
 	def run(self, items):
 		import curses # has a ton of global state
 		self.c = curses
@@ -449,9 +572,11 @@ def main(args=None):
 
 	parser.add_argument('--debug', action='store_true',
 		default=conf['debug'], help='Verbose operation mode.')
+	parser.add_argument('--fatal', action='store_true',
+		help='Dont try too hard to recover from errors. For debugging purposes only.')
+
 	parser.add_argument('--child-pid-do-not-use', action='store_true',
 		help='Used internally to spawn dbus sub-pid, should not be used directly.')
-
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
@@ -469,18 +594,20 @@ def main(args=None):
 
 	dbus_bridge = ['--child-pid-do-not-use']
 	if opts.debug: dbus_bridge += ['--debug']
-	dbus_bridge = PAMixerDBusBridge(self_exec_cmd(*dbus_bridge))
-
-	menu = PAMixerMenu(dbus_bridge)
-
+	dbus_bridge = PAMixerDBusBridge(self_exec_cmd(*dbus_bridge), fatal=opts.fatal)
+	menu = PAMixerMenu(dbus_bridge, fatal=opts.fatal)
 	dbus_bridge.install_signal_handler(menu.update_signal)
 	dbus_bridge.child_start()
 
-	print(dbus_bridge.call( 'Get',
-		['org.PulseAudio.Core1', 'PlaybackStreams'],
-		iface='org.freedesktop.DBus.Properties' ))
+	print(menu.item_list)
+	print(menu.item_len_max)
+	exit()
 
-	# ui = PAMixerUI(menu)
+	# curses_ui = PAMixerUI(menu)
+
+	# log.debug('Starting curses ui loop...')
+	# curses_ui.run()
+	# log.debug('Finished')
 
 
 if __name__ == '__main__': sys.exit(main())
