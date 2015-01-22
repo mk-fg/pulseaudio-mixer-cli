@@ -78,9 +78,10 @@ page), and without "inverted row" selection visible:
 Sink levels always displayed on top, "M" or "-" to the left of the bar is a mute
 indicator.
 
-Controls are arrow keys (incl. numpad) or their vi/emacs-style counterparts, "m"
-or "space" to toggle mute and 1-0 "number row" keys to set level (1=0%, 0=100%,
-only in pa-mixer-mk2), "q" to quit.
+Controls are arrow keys (incl. numpad) or their vi/emacs-style counterparts to
+pick row and adjust bars left and right, "m" or "space" to toggle mute, "q" to
+quit and "1"-"0" number row keys to set specific level (1=0%, 0=100%, only in
+pa-mixer-mk2).
 
 Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg" (see
 [ConfigParser docs](http://docs.python.org/2/library/configparser.html) for more
