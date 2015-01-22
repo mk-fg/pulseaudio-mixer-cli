@@ -5,7 +5,8 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from collections import deque
 import ConfigParser as configparser
-import os, sys, io, re, time, types, subprocess, signal
+import os, sys, io, logging, re, time, types
+import json, subprocess, signal, fcntl, base64
 
 
 conf_defaults = {
@@ -19,17 +20,19 @@ def update_conf_from_file(conf, path_or_file):
 		config.readfp(src)
 	for k, v in conf.viewitems():
 		get_val = config.getint if not isinstance(v, bool) else config.getboolean
-		try: defaults[k] = get_val('default', k)
+		try: conf[k] = get_val('default', k)
 		except configparser.Error: pass
 
 
 class PAMixerDBusBridgeError(Exception): pass
+class PAMixerDBusError(Exception): pass
 
 class PAMixerDBusBridge(object):
 	'''Class to import/spawn glib/dbus eventloop in a
 			subprocess and communicate with it via signals and pipes.
 		Presents async kinda-rpc interface to a dbus loop running in separate pid.
-		Comm protocol is json lines, with signal sent to parent pid on any dbus async event.'''
+		Protocol is json lines over stdin/stdout pipes,
+			with signal sent to parent pid on any dbus async event (e.g. signal) from child.'''
 
 	signal = signal.SIGUSR1 # used to break curses loop in the parent pid
 
@@ -40,8 +43,9 @@ class PAMixerDBusBridge(object):
 
 	def _child_readline(self, wait_for_cid=None, one_signal=False, init_line=False):
 		while True:
-			if wait_for_cid and cid in self.child_calls:
-				line = self.child_calls[cid]
+			if wait_for_cid and wait_for_cid in self.child_calls:
+				# XXX: check/raise errors here?
+				line = self.child_calls[wait_for_cid]
 				self.child_calls.clear()
 				return line
 			line = self._child.stdout.readline().strip()
@@ -52,15 +56,23 @@ class PAMixerDBusBridge(object):
 			if line['t'] == 'signal':
 				self.child_sigs.append(line)
 				if one_signal: break
-			elif line['t'] == 'call': self.child_calls[cid] = line
+			elif line['t'] in ['call_result', 'call_error']: self.child_calls[line['cid']] = line
 
-	def call(self, func, *args):
+	def call(self, func, args, **call_kws):
 		self.child_check_restart()
-		cid = os.urandom(4)
-		call = json.dumps(dict(t='call', cid=cid, func=func, args=args))
+		cid = base64.urlsafe_b64encode(os.urandom(3))
+		call = dict(t='call', cid=cid, func=func, args=args, **call_kws)
+		try: call = json.dumps(call)
+		except Exception as err:
+			log.exception('Failed to encode data to json (error: %s), returning None: %r', err, call)
+			return None
 		assert '\n' not in call, repr(call)
 		self._child.stdin.write('{}\n'.format(call))
-		return self._child_readline(wait_for_cid=cid)['value']
+		res = self._child_readline(wait_for_cid=cid)
+		if res['t'] == 'call_error':
+			raise PAMixerDBusError(res['err_type'], res['err_msg'])
+		assert res['t'] == 'call_result', res
+		return res['val']
 
 
 	def install_signal_handler(self, func):
@@ -89,6 +101,7 @@ class PAMixerDBusBridge(object):
 		if self._child.poll() is not None:
 			log.debug('glib/dbus child pid (%s) died. restarting it', self._child.pid)
 			self.child_start(gc_old_one=True)
+
 
 	def _get_bus_address(self):
 		srv_addr = os.environ.get('PULSE_DBUS_SERVER')
@@ -119,45 +132,114 @@ class PAMixerDBusBridge(object):
 				srv_addr = False # to avoid endless loop
 		return self._dbus.connection.Connection(srv_addr)
 
-	def _core_notify(self, path, op):
+
+	def _loop_exc_stop(self, exc_info=None):
+		self.loop_exc = exc_info or sys.exc_info()
+		assert self.loop_exc
+		self.loop.quit()
+
+	def _glib_err_wrap(func):
+		@ft.wraps(func)
+		def _wrapper(self, *args, **kws):
+			try: return func(self, *args, **kws)
+			except: self._loop_exc_stop()
+		return _wrapper
+
+	@_glib_err_wrap
+	def _core_notify(self, _signal=False, **kws):
+		chunk = json.dumps(dict(**kws))
+		assert '\n' not in chunk, chunk
 		try:
-			os.kill(self.core_pid, self.signal)
-			self.stdout.write('{} {}\n'.format(op, path))
-		except: loop.quit()
+			if _signal: os.kill(self.core_pid, self.signal)
+			self.stdout.write('{}\n'.format(chunk))
+		except (OSError, IOError):
+			self.loop.quit() # parent is gone, we're done too
+
+	@_glib_err_wrap
+	def _rpc_call(self, buff, stream=None, ev=None):
+		assert stream is self.stdin, [stream, self.stdin]
+
+		if ev is None: ev = self._gobj.IO_IN
+		if ev & (self._gobj.IO_ERR | self._gobj.IO_HUP):
+			raise PAMixerDBusBridgeError('Stdin pipe from parent pid has been closed')
+		elif ev & self._gobj.IO_IN:
+			while True:
+				chunk = self.stdin.read(2**20)
+				if not chunk: break
+				buff.append(chunk)
+			while True:
+				# Detect if there are any full requests buffered
+				for n, chunk in enumerate(buff):
+					if '\n' in chunk: break
+				else: break # no more full requests
+
+				# Read/decode next request from buffer
+				req = list()
+				for m in xrange(n+1):
+					chunk = buff.popleft()
+					if m == n:
+						chunk, chunk_next = chunk.split('\n', 1)
+						buff.appendleft(chunk_next)
+					assert '\n' not in chunk, chunk
+					req.append(chunk)
+				req = json.loads(''.join(req))
+
+				# Run dbus call and return the result, synchronously
+				assert req['t'] == 'call', req
+				func, kws = req['func'], dict()
+				obj_path, iface = req.get('obj'), req.get('iface')
+				if iface: kws['dbus_interface'] = iface
+				obj = self.core if not obj_path\
+					else self.bus.get_object(object_path=obj_path) # XXX: bus gone handling
+				try: res = getattr(obj, func)(*req['args'], **kws)
+				except self._dbus.exceptions.DBusException as err:
+					self._core_notify( t='call_error', cid=cid,
+						err_type=err.get_dbus_name(), err_msg=err.message )
+				else:
+					self._core_notify(t='call_result', cid=req['cid'], val=res) # XXX: encoding of val here?
+		else:
+			log.warn('Unrecognized event type from glib: %r', ev)
+
+	@_glib_err_wrap
+	def _relay_signal(self, obj_path, sig_name):
+		self._core_notify(_signal=True, t='signal', sig_name=sig_name, obj=obj_path)
+
 
 	def child_run(self):
 		from dbus.mainloop.glib import DBusGMainLoop
-		from gi.repository import GLib
+		from gi.repository import GLib, GObject
 		import dbus
 
-		self._dbus = dbus
+		self._dbus, self._gobj = dbus, GObject
 
 		# Disable stdin/stdout buffering
-		sys.stdout = io.open(sys.stdout.fileno(), 'wb', buffering=0)
-		sys.stdin = io.open(sys.stdin.fileno(), 'rb', buffering=0)
+		self.stdout = io.open(sys.stdout.fileno(), 'wb', buffering=0)
+		self.stdin = io.open(sys.stdin.fileno(), 'rb', buffering=0)
 
-		sys.stdout.write('ready\n') # wait for main process to get ready, signal readiness
+		self.stdout.write('ready\n') # wait for main process to get ready, signal readiness
 		log.debug('DBus signal handler thread started')
 
 		DBusGMainLoop(set_as_default=True)
-		loop = GLib.MainLoop()
+		self.loop, self.loop_exc = GLib.MainLoop(), None
 
-		while True:
-			bus = self._get_bus()
-			core = bus.get_object(object_path='/org/pulseaudio/core1')
-			# XXX: import stdin fd here, add rpc handling of lines there
-			# XXX: self._core_notify
-			for sig_name, sig_handler in (
-					('NewSink', ft.partial(notify, op='^')),
-					('SinkRemoved', ft.partial(notify, op='v')),
-					('NewPlaybackStream', ft.partial(notify, op='+')),
-					('PlaybackStreamRemoved', ft.partial(notify, op='-'))):
-				bus.add_signal_receiver(sig_handler, sig_name)
-				core.ListenForSignal(
-					'org.PulseAudio.Core1.{}'.format(sig_name), dbus.Array(signature='o') )
-			loop.run()
+		self.bus = self._get_bus() # XXX: bus gone handling
+		self.core = self.bus.get_object(object_path='/org/pulseaudio/core1')
 
-		raise RuntimeError('Child code broke out of the loop, this is a bug.')
+		rpc_buffer = deque()
+		flags = fcntl.fcntl(self.stdin, fcntl.F_GETFL)
+		fcntl.fcntl(self.stdin, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+		self._gobj.io_add_watch( self.stdin,
+			self._gobj.IO_IN | self._gobj.IO_ERR | self._gobj.IO_HUP,
+			ft.partial(self._rpc_call, rpc_buffer) )
+
+		for sig_name in [
+				'NewSink', 'SinkRemoved', 'NewPlaybackStream', 'PlaybackStreamRemoved']:
+			self.bus.add_signal_receiver(ft.partial(self._relay_signal, sig_name=sig_name), sig_name)
+			self.core.ListenForSignal(
+				'org.PulseAudio.Core1.{}'.format(sig_name), self._dbus.Array(signature='o') )
+		self.loop.run()
+		# XXX: wrapper loop here, in case of *clean* loop.quit() yet dbus not being dead
+		if self.loop_exc: raise self.loop_exc[0], self.loop_exc[1], self.loop_exc[2]
 
 
 
@@ -183,12 +265,16 @@ class PAMixerMenuItem(object):
 
 class PAMixerMenu(object):
 
+	def __init__(self, dbus_bridge):
+		self.dbus_bridge = dbus_bridge
+
+	def update_signal(self, name, obj):
+		log.debug('update_signal %s %s', name, obj)
+
 	@property
 	def max_key_len(self): int
 
 	def item_list(self): iterable
-
-	def update_signal(self, name, obj): None
 
 
 
@@ -303,63 +389,69 @@ def self_exec_cmd(*args):
 	return [sys.executable or 'python'] + args
 
 def main(args=None):
+	global log
+	conf = conf_defaults.copy()
+	conf_file = os.path.expanduser('~/.pulseaudio-mixer-cli.cfg')
+	try: conf_file = io.open(conf_file)
+	except (OSError, IOError) as err: pass
+	else: update_conf_from_file(conf, conf_file)
+
 	import argparse
 	parser = argparse.ArgumentParser(description='Command-line PulseAudio mixer tool.')
 
 	# parser.add_argument('-a', '--adjust-step',
-	# 	action='store', type=int, metavar='step', default=defaults['adjust-step'],
+	# 	action='store', type=int, metavar='step', default=conf['adjust-step'],
 	# 	help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
 	# parser.add_argument('-l', '--max-level',
-	# 	action='store', type=int, metavar='level', default=defaults['max-level'],
+	# 	action='store', type=int, metavar='level', default=conf['max-level'],
 	# 	help='Value to treat as max (default: %(default)s).')
 	# parser.add_argument('-n', '--use-media-name',
-	# 	action='store_true', default=defaults['use-media-name'],
+	# 	action='store_true', default=conf['use-media-name'],
 	# 	help='Display streams by "media.name" property, if possible.'
 	# 		' Default is to prefer application name and process properties.')
 	# parser.add_argument('-e', '--encoding',
-	# 	metavar='enc', default=defaults['encoding'],
+	# 	metavar='enc', default=conf['encoding'],
 	# 	help='Encoding to enforce for the output. Any non-decodeable bytes will be stripped.'
 	# 		' Mostly useful with --use-media-name. Default: %(default)s.')
 	# parser.add_argument('-v', '--verbose',
-	# 	action='store_true', default=defaults['verbose'],
+	# 	action='store_true', default=conf['verbose'],
 	# 	help='Dont close stderr to see any sort of errors (which'
 	# 		' mess up curses interface, thus silenced that way by default).')
 
 	parser.add_argument('--debug', action='store_true',
-		default=defaults['debug'], help='Verbose operation mode.')
+		default=conf['debug'], help='Verbose operation mode.')
 	parser.add_argument('--child-pid-do-not-use', action='store_true',
 		help='Used internally to spawn dbus sub-pid, should not be used directly.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	if opts.child_pid_do_not_use:
-		try: PAMixerDBusBridge().child_run()
-		except PAMixerDBusBridgeError:
-			argv = self_exec_cmd(sys.argv)
-			os.closerange(3, max(map(int, os.listdir('/proc/self/fd'))) + 1)
-			os.execvp(argv[0], argv)
-		raise RuntimeError( 'PAMixerDBusBridge.child_run() has'
-			' returned unexpectedly (should be an endless loop or exception).' )
-
-	global log
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
 
-	conf = conf_defaults.copy()
-	conf_file = os.path.expanduser('~/.pulseaudio-mixer-cli.cfg')
-	try: conf_file = io.open(conf_file)
-	except (OSError, IOError) as err:
-		log.debug('Not processing config file %r: %s %s', conf_file, type(err), err)
-	else: update_conf_from_file(conf, conf_file)
+	if opts.child_pid_do_not_use:
+		global print
+		print = ft.partial(print, file=sys.stderr)
+		try: return PAMixerDBusBridge().child_run()
+		except PAMixerDBusBridgeError as err:
+			log.info('PAMixerDBusBridgeError event in a child pid: %s', err)
+			argv = self_exec_cmd(sys.argv)
+			os.closerange(3, max(map(int, os.listdir('/proc/self/fd'))) + 1)
+			os.execvp(argv[0], argv)
 
-	dbus_bridge = PAMixerDBusBridge(self_exec_cmd('--child-pid-do-not-use'])
+	dbus_bridge = ['--child-pid-do-not-use']
+	if opts.debug: dbus_bridge += ['--debug']
+	dbus_bridge = PAMixerDBusBridge(self_exec_cmd(*dbus_bridge))
+
 	menu = PAMixerMenu(dbus_bridge)
 
 	dbus_bridge.install_signal_handler(menu.update_signal)
 	dbus_bridge.child_start()
 
-	ui = PAMixerUI(menu)
+	print(dbus_bridge.call( 'Get',
+		['org.PulseAudio.Core1', 'PlaybackStreams'],
+		iface='org.freedesktop.DBus.Properties' ))
 
+	# ui = PAMixerUI(menu)
 
 
 if __name__ == '__main__': sys.exit(main())
