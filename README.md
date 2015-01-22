@@ -28,8 +28,8 @@ Make sure you have `load-module module-dbus-protocol` line in
 especially on Ubuntu, where it seem to be disabled by default
 (see [#1](https://github.com/mk-fg/pulseaudio-mixer-cli/issues/1)).
 
-There is a "pa-mixer-mk2.py" script in the repo, which is unfinished and
-unusable yet, just ignore it for now.
+There is now also "pa-mixer-mk2.py" script in the repo, which is a rewrite of
+the original version, and might have some extra features and/or bugs.
 
 ### Requirements
 
@@ -88,6 +88,10 @@ aren't suitable for a specific setup and creating a shell alias or wrapper is
 too much trouble.
 Commandline values override the ones defined in a config file.
 
+There is a shiny rewritten "pa-mixer-mk2.py" script version, which is probably
+way less tested, but have some extra features, which I can't be bothered to
+add/test for an old one, so maybe take a look at that one as well.
+
 
 Internals
 --------------------
@@ -112,14 +116,14 @@ sake of simplicity. Volume levels are polled on occasional changes anyway, so
 they should be updated on the ui update events.
 
 DBus reconnection (sometimes via re-exec, because python-dbus seem to cache more
-stuff than it probably should) is built-in, so there's no problem with transient
-pulseaudio processes, although the fact that the client is connected via dbus
-interface will keep them alive indefinitely.
+stuff than it probably should) is built-in, so there should be no problem with
+transient pulseaudio processes, although the fact that the client is connected
+via dbus interface might keep them alive indefinitely.
 
 Starting the mixer should also trigger pulseaudio start, if proper dbus
 autolaunch service descriptions are installed in the system.
 
-It should also work with system-wide pulseaudio daemon (usage of which is
+Script should also work with system-wide pulseaudio daemon (usage of which is
 [highly discouraged by developers](http://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/WhatIsWrongWithSystemWide),
 btw) - in that case neither dbus system nor session bus is accessed, since
 ServerLookup interface doesn't seem to be available on either one (at least in
@@ -130,15 +134,7 @@ ServerLookup interface doesn't seem to be available on either one (at least in
 TODO
 --------------------
 
-- Rewrite the whole thing, splitting all dbus-related ops into a subprocess
-  (currently it's only signals), leaving a clean "curses UI vs dbus/glib api
-  client" split.
-
-  Should allow to drop a lot of "try-except" cruft around all dbus ops and the
-  whole "restart" thing will only apply to dbus sub-pid, leaving UI unharmed.
-
-  Started rewrite as "pa-mixer-mk2.py", not finished yet, will probably keep old
-  version around indefinitely anyway, for compatibility, py3 and such.
+All new features (or maybe bloat) go into "pa-mixer-mk2.py" script.
 
 - Add in-app storage and/or configuration of volume levels based on stream
   parameters.
@@ -150,10 +146,6 @@ TODO
 
   Also, I still can't seem to fully get the logic (didn't look into code/modules
   though) of PA setting the initial volumes, sometimes it seem rather arbitrary.
-
-- Make number row keys ("1" to "0") set fixed levels (out of max) - e.g. "1" for
-  0%, "0" for 100%, to avoid wasting time on fiddling with left-right keys when
-  you know exactly what you want.
 
 - Check if stream name attribute can change over the stream lifetime (e.g. mpv
   online radio stream), listen for signals for such changes or poll stream name

@@ -462,10 +462,6 @@ class PAMixerMenu(object):
 
 
 
-
-
-class PAMixerUIUpdate(Exception): pass # XXX: not needed here?
-
 class PAMixerUI(object):
 
 	item_len_min = 10
@@ -559,28 +555,27 @@ class PAMixerUI(object):
 		self.conf.adjust_step /= 100.0
 
 		while True:
-			try: self.c_win_draw(win, items, item_hl)
-			except PAMixerUIUpdate: continue # XXX: not needed anymore?
+			self.c_win_draw(win, items, item_hl)
 
 			try: key = win.getch()
 			except KeyboardInterrupt: key = self.c_key('q')
 			except c.error: continue
-			log.debug('Keypress event: %s (%r)', key, c.keyname(key))
+			key_name = c.keyname(key)
+			log.debug('Keypress event: %s (%r)', key, key_name)
 
-			try:
-				# XXX: add 1-0 keys' handling to set level here
-				if key_match(key, 'up', 'k', 'p'): item_hl = item_hl.get_prev()
-				elif key_match(key, 'down', 'j', 'n'): item_hl = item_hl.get_next()
-				elif key_match(key, 'left', 'h', 'b'):
-					item_hl.volume_change(-self.conf.adjust_step)
-				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
-				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
-				elif key_match(key, 'resize', '\f'):
-					c.endwin()
-					stdscr.refresh()
-					win = self.c_win_init()
-				elif key_match(key, 'q'): break
-			except PAMixerUIUpdate: continue # XXX: not needed anymore?
+			if key_match(key, 'up', 'k', 'p'): item_hl = item_hl.get_prev()
+			elif key_match(key, 'down', 'j', 'n'): item_hl = item_hl.get_next()
+			elif key_match(key, 'left', 'h', 'b'):
+				item_hl.volume_change(-self.conf.adjust_step)
+			elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
+			elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
+			elif key_name.isdigit(): # 1-0 keyboard row
+				item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
+			elif key_match(key, 'resize', '\f'):
+				c.endwin()
+				stdscr.refresh()
+				win = self.c_win_init()
+			elif key_match(key, 'q'): break
 
 	def run(self):
 		import curses # has a ton of global state
