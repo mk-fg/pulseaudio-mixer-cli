@@ -402,13 +402,24 @@ class PAMixerMenuItem(object):
 			lambda: None, 'DBus {} property proxy'.format(dbus_name) )
 
 	muted = _dbus_prop('mute')
-	volume = _dbus_prop('volume')
+	volume_chans = _dbus_prop('volume') # tuple of ints (absolute values, as returned by PA)
 
+	@property
+	def volume(self):
+		'Volume as one float in 0-1 range.'
+		volume_chans = self.volume_chans
+		volume_abs = sum(volume_chans) / float(len(volume_chans))
+		return min(1.0, volume_abs / float(self.conf.max_level))
+	@volume.setter
+	def volume(self, val):
+		chans = len(self.volume_abs)
+		self.volume_abs = [int(val * self.conf.max_level)] * chans
+
+	def muted_toggle(self): self.muted = not self.muted
 	def volume_change(self, delta): self.volume += delta
 
-
-	def pick_next(self): PAMixerMenuItem # XXX
-	def pick_prev(self): PAMixerMenuItem # XXX
+	def get_next(self): return self.menu.item_after(self)
+	def get_prev(self): return self.menu.item_before(self)
 
 
 class PAMixerMenu(object):
@@ -428,9 +439,16 @@ class PAMixerMenu(object):
 				self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
 		return self.items.values()
 
-	@property
-	def item_len_max(self):
-		return max(len(item.name) for item in self.item_list)
+	def item_after(self, item):
+		for k, item2 in self.items.viewitems():
+			if item is StopIteration: return item2
+			if k == item.dbus_path: item = StopIteration
+
+	def item_before(self, item):
+		item_prev = None
+		for k, item2 in self.items.viewitems():
+			if k == item.dbus_path: return item_prev
+			item_prev = item2
 
 
 
@@ -442,11 +460,21 @@ class PAMixerUI(object):
 
 	item_len_min = 10
 	bar_len_min = 10
-	bar_caps_func = lambda bar='': ' [ ' + bar + ' ]'
+	bar_caps_func = staticmethod(lambda bar='': ' [ ' + bar + ' ]')
 	border = 1
 
 	def __init__(self, menu):
-		self.menu = menu
+		self.menu, self.conf = menu, menu.conf
+
+	def __enter__(self):
+		self.c = None
+		return self
+
+	def __exit__(self, exc_t, exc_val, exc_tb):
+		if self.c:
+			self.c.endwin()
+			self.c = None
+
 
 	def c_win_init(self):
 		win = self.c.newwin(*self.c_win_size())
@@ -459,33 +487,48 @@ class PAMixerUI(object):
 		nlines, ncols = max(1, size[0] - 2 * self.border), max(1, size[1] - 2 * self.border)
 		return nlines, ncols, min(self.border, size[0]), min(self.border, size[1])
 
-	def c_win_draw(self, win, items, hl=None):
-		win_rows, win_len = win.getmaxyx()
-		if win_len <= 1: return
+	def c_win_draw(self, win, items, item_hl):
+		win.erase()
+		if not items: return
 
-		item_len_max = items.max_key_len
+		win_rows, win_len = win.getmaxyx()
+		if win_len <= 1: return # nothing fits
+
+		# Fit stuff vertically
+		if win_rows < len(items) + 1: # pick/display items near highlighted one
+			pos, offset = items.find(item_hl), 1
+			items_fit = {pos: item}
+			while True:
+				for p in pos + offset, pos - offset:
+					try: items_fit[p] = items[p]
+					except IndexError: continue
+					if win_rows <= len(items_fit) + 1: break
+			items = items_fit
+
+		# Fit stuff horizontally
+		item_len_max = max(len(item.name) for item in items)
 		mute_button_len = 2
 		bar_len = win_len - item_len_max - mute_button_len - len(self.bar_caps_func())
 		if bar_len < self.bar_len_min:
 			item_len_max = max(self.item_len_min, item_len_max + bar_len - self.bar_len_min)
 			bar_len = win_len - item_len_max - mute_button_len - len(self.bar_caps_func())
 			if bar_len <= 0: item_len_max = win_len # just draw labels
-			if self.item_len_max < self.item_len_min: item_len_max = min(items.max_key_len, win_len)
+			if item_len_max < self.item_len_min:
+				item_len_max = min(max(len(item.name) for item in items), win_len)
 
-		win.erase() # cleanup old entries
 		for row, item in enumerate(items):
 			if row >= win_rows - 1: break # not sure why bottom window row seem to be unusable
 
-			attrs = self.c.A_REVERSE if item == hl else self.c.A_NORMAL
+			attrs = self.c.A_REVERSE if item is item_hl else self.c.A_NORMAL
 
-			win.addstr(row, 0, item[:item_len_max].encode(optz.encoding), attrs)
+			win.addstr(row, 0, force_bytes(item.name[:item_len_max]), attrs)
 			if win_len > item_len_max + mute_button_len:
-				if items.get_mute(item): mute_button = " M"
+				if item.muted: mute_button = " M"
 				else: mute_button = " -"
 				win.addstr(row, item_len_max, mute_button)
 
 				if bar_len > 0:
-					bar_fill = int(round(items.get_volume(item) * bar_len))
+					bar_fill = int(round(item.volume * bar_len))
 					bar = self.bar_caps_func('#' * bar_fill + '-' * (bar_len - bar_fill))
 					win.addstr(row, item_len_max + mute_button_len, bar)
 
@@ -493,47 +536,45 @@ class PAMixerUI(object):
 		if len(k) == 1: return ord(k)
 		return getattr(self.c, 'key_{}'.format(k).upper())
 
-	def _run(self, stdscr): # XXX: convert "items" to whatever self.menu interface
-		c, k, self.c_stdscr = self.c, self.c_key, stdscr
+	def _run(self, stdscr):
+		c, self.c_stdscr = self.c, stdscr
+		key_match = lambda key,*choices: key in map(self.c_key, choices)
 
 		c.curs_set(0)
 		c.use_default_colors()
 
 		win = self.c_win_init()
-		hl = next(iter(items)) if items else '' # XXX: still use something like items object?
-		optz.adjust_step /= 100.0
+		items = self.menu.item_list # XXX: dynamic
+		item_hl = next(iter(items)) if items else None
+		self.conf.adjust_step /= 100.0
 
 		while True:
-			glib_thing.child_check_restart() # XXX: proxy via menu? do it there implicitly?
-
-			try: self.c_win_draw(win, items, hl=hl) # XXX: pass iter here, or don't pass menu obj at all
+			try: self.c_win_draw(win, items, item_hl)
 			except PAMixerUIUpdate: continue # XXX: not needed anymore?
 
 			try: key = win.getch()
+			except KeyboardInterrupt: key = self.c_key('q')
 			except c.error: continue
 			log.debug('Keypress event: %s', key)
 
 			try:
 				# XXX: add 1-0 keys' handling to set level here
-				if key in [k('down'), k('j'), k('n')]: hl = items.next_key(hl)
-				elif key in (c.KEY_UP, ord('k'), ord('p')): hl = items.prev_key(hl)
-				elif key in (c.KEY_LEFT, ord('h'), ord('b')):
-					items.set_volume(hl, items.get_volume(hl) - optz.adjust_step)
-				elif key in (c.KEY_RIGHT, ord('l'), ord('f')):
-					items.set_volume(hl, items.get_volume(hl) + optz.adjust_step)
-				elif key in (ord(' '), ord('m')):
-					items.set_mute(hl, not items.get_mute(hl))
-				elif key < 255 and key > 0 and chr(key) == 'q': sys.exit(0)
-				elif key in (c.KEY_RESIZE, ord('\f')):
+				if key_match(key, 'up', 'k', 'p'): item_hl = item_hl.get_prev()
+				elif key_match(key, 'down', 'j', 'n'): item_hl = item_hl.get_next()
+				elif key_match('left', 'h', 'b'): item_hl.volume_change(-self.conf.adjust_step)
+				elif key_match('right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
+				elif key_match(' ', 'm'): item_hl.muted_toggle()
+				elif key_match('resize', '\f'):
 					c.endwin()
 					stdscr.refresh()
 					win = self.c_win_init()
-			except PAMixerUIUpdate: continue
+				elif key < 255 and key > 0 and chr(key) == 'q': break
+			except PAMixerUIUpdate: continue # XXX: not needed anymore?
 
-	def run(self, items):
+	def run(self):
 		import curses # has a ton of global state
 		self.c = curses
-		self.c.wrapper(self._run, items=items)
+		self.c.wrapper(self._run)
 
 
 
@@ -577,6 +618,9 @@ def main(args=None):
 		help='Used internally to spawn dbus sub-pid, should not be used directly.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
+	for k,v in vars(opts).viewitems(): setattr(conf, k, v)
+	opts = conf # to make sure there's no duality of any kind
+
 	global log
 	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
 	log = logging.getLogger()
@@ -597,11 +641,11 @@ def main(args=None):
 	menu = PAMixerMenu(dbus_bridge, conf, fatal=opts.fatal)
 	dbus_bridge.install_signal_handler(menu.update_signal)
 	dbus_bridge.child_start()
-	curses_ui = PAMixerUI(menu)
 
-	log.debug('Starting curses ui loop...')
-	curses_ui.run()
-	log.debug('Finished')
+	with PAMixerUI(menu) as curses_ui:
+		log.debug('Starting curses ui loop...')
+		curses_ui.run()
+		log.debug('Finished')
 
 
 if __name__ == '__main__': sys.exit(main())
