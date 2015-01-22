@@ -13,8 +13,10 @@ class Conf(object):
 	def __repr__(self): return repr(vars(self))
 
 	adjust_step = 5
-	max_level = 2 ** 16
+	max_level = 2 ** 16 # absolute value (as used in PA), displayed as "100%"
+	min_level = 0 # absolute value (as used in PA), displayed as "0%"
 	use_media_name = False
+	placeholder_media_names = 'audio stream', 'AudioStream'
 	verbose = False
 
 def update_conf_from_file(conf, path_or_file):
@@ -26,8 +28,8 @@ def update_conf_from_file(conf, path_or_file):
 		if k.startswith('_'): continue
 		v = getattr(conf, k)
 		get_val = config.getint if not isinstance(v, bool) else config.getboolean
-		for k in k, k.replace('_', '-'):
-			try: setattr(conf, k, get_val('default', k))
+		for k_conf in k, k.replace('_', '-'):
+			try: setattr(conf, k, get_val('default', k_conf))
 			except configparser.Error: pass
 
 
@@ -418,12 +420,13 @@ class PAMixerMenuItem(object):
 		'Volume as one float in 0-1 range.'
 		volume_chans = self.volume_chans
 		volume_abs = sum(volume_chans) / float(len(volume_chans))
+		volume_abs = max(0, volume_abs - self.conf.min_level)
 		return min(1.0, volume_abs / float(self.conf.max_level))
 	@volume.setter
 	def volume(self, val):
 		log.debug('Setting volume: %s', val)
 		val, chans = min(1.0, max(0, val)), len(self.volume_chans)
-		self.volume_chans = [int(val * self.conf.max_level)] * chans
+		self.volume_chans = [int(val * self.conf.max_level) + self.conf.min_level] * chans
 
 	def muted_toggle(self): self.muted = not self.muted
 	def volume_change(self, delta): self.volume += delta
