@@ -38,13 +38,13 @@ class PAMixerDBusBridge(object):
 
 	def __init__(self, child_cmd=None):
 		self.child_cmd, self.core_pid = child_cmd, os.getppid()
-		self.child_sigs, self.child_calls, self._child = deque(), dict(), None
+		self.child_sigs, self.child_calls, self._child, self._child_gc = deque(), dict(), None, set()
 
 
 	def _child_readline(self, wait_for_cid=None, one_signal=False, init_line=False):
 		while True:
 			if wait_for_cid and wait_for_cid in self.child_calls:
-				# XXX: check/raise errors here?
+				# XXX: check for errors indicating that dbus is gone here?
 				line = self.child_calls[wait_for_cid]
 				self.child_calls.clear()
 				return line
@@ -67,10 +67,17 @@ class PAMixerDBusBridge(object):
 			log.exception('Failed to encode data to json (error: %s), returning None: %r', err, call)
 			return None
 		assert '\n' not in call, repr(call)
-		self._child.stdin.write('{}\n'.format(call))
-		res = self._child_readline(wait_for_cid=cid)
-		if res['t'] == 'call_error':
-			raise PAMixerDBusError(res['err_type'], res['err_msg'])
+		for n in xrange(2): # even 2 is kinda generous - likely to be some bug
+			try:
+				self._child.stdin.write('{}\n'.format(call))
+				res = self._child_readline(wait_for_cid=cid)
+			except Exception as err:
+				log.exception('Failure communicating with child pid, restarting it: %s', err)
+				self.child_kill()
+				self.child_check_restart()
+			else: break
+		else: raise PAMixerDBusBridgeError('Failed to communicate with child pid')
+		if res['t'] == 'call_error': raise PAMixerDBusError(res['err_type'], res['err_msg'])
 		assert res['t'] == 'call_result', res
 		return res['val']
 
@@ -78,6 +85,8 @@ class PAMixerDBusBridge(object):
 	def install_signal_handler(self, func):
 		self.signal_func = func
 		signal.signal(self.signal, self.signal_handler)
+		# Async signals also require async detection of when child died
+		signal.signal(signal.SIGCHLD, self.child_check_restart)
 
 	def signal_handler(self, sig=None, frm=None):
 		if not self.child_sigs: self._child_readline(one_signal=True)
@@ -95,7 +104,19 @@ class PAMixerDBusBridge(object):
 			stdout=subprocess.PIPE, stdin=subprocess.PIPE, close_fds=True )
 		self._child_readline(init_line=True) # wait until it's ready
 
-	def child_check_restart(self):
+	def child_kill(self):
+		if self._child:
+			child, self._child = self._child, None
+			self._child_gc.append(child.pid)
+			try: child.kill() # no need to be nice here
+			except OSError: pass
+
+	def child_check_restart(self, sig=None, frm=None): # XXX: call implicitly on and comm errors
+		if self._child_gc: # these are cleaned-up just to avoid keeping zombies around
+			for pid in list(self._child_gc):
+				try: res = os.waitpid(pid, os.WNOHANG)
+				except OSError: res = pid, None
+				if res and res[0]: self._child_gc.remove(pid)
 		self.child_start()
 		if not self._child: return # can't be started
 		if self._child.poll() is not None:
@@ -147,7 +168,9 @@ class PAMixerDBusBridge(object):
 
 	@_glib_err_wrap
 	def _core_notify(self, _signal=False, **kws):
-		chunk = json.dumps(dict(**kws))
+		chunk = dict(**kws)
+		log.debug('dbus-io >> %s', chunk)
+		chunk = json.dumps(chunk)
 		assert '\n' not in chunk, chunk
 		try:
 			if _signal: os.kill(self.core_pid, self.signal)
@@ -183,6 +206,7 @@ class PAMixerDBusBridge(object):
 					assert '\n' not in chunk, chunk
 					req.append(chunk)
 				req = json.loads(''.join(req))
+				log.debug('dbus-io << %s', req)
 
 				# Run dbus call and return the result, synchronously
 				assert req['t'] == 'call', req
@@ -209,6 +233,11 @@ class PAMixerDBusBridge(object):
 		from dbus.mainloop.glib import DBusGMainLoop
 		from gi.repository import GLib, GObject
 		import dbus
+
+		def excepthook(t, v, tb, hook=sys.excepthook):
+			time.sleep(0.2) # to dump parent/child tracebacks non-interleaved
+			return hook(t, v, tb)
+		sys.excepthook = excepthook
 
 		self._dbus, self._gobj = dbus, GObject
 
@@ -436,7 +465,7 @@ def main(args=None):
 			log.info('PAMixerDBusBridgeError event in a child pid: %s', err)
 			argv = self_exec_cmd(sys.argv)
 			os.closerange(3, max(map(int, os.listdir('/proc/self/fd'))) + 1)
-			os.execvp(argv[0], argv)
+			os.execvp(*argv)
 
 	dbus_bridge = ['--child-pid-do-not-use']
 	if opts.debug: dbus_bridge += ['--debug']
