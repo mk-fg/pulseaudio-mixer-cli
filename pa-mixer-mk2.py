@@ -37,7 +37,6 @@ dbus_abbrevs = dict(
 dbus_abbrev = lambda k: dbus_abbrevs.get(k, k)
 dbus_join = lambda *parts: '.'.join(map(dbus_abbrev, parts[:-1]) + parts[-1])
 
-
 def dbus_bytes(dbus_arr, strip='\0' + string.whitespace):
 	return bytes(bytearray(dbus_arr).strip(strip))
 
@@ -75,6 +74,7 @@ def force_unicode(bytes_or_unicode, encoding='utf-8', errors='replace'):
 def to_bytes(obj, **conv_kws):
 	if not isinstance(obj, types.StringTypes): obj = bytes(obj)
 	return force_bytes(obj)
+
 
 
 class PAMixerDBusBridgeError(Exception): pass
@@ -296,7 +296,7 @@ class PAMixerDBusBridge(object):
 
 	@_glib_err_wrap
 	def _relay_signal(self, obj_path, sig_name):
-		self._core_notify(_signal=True, t='signal', sig_name=sig_name, obj=obj_path)
+		self._core_notify(_signal=True, t='signal', name=sig_name, obj=obj_path)
 
 
 	def child_run(self):
@@ -432,33 +432,44 @@ class PAMixerMenuItem(object):
 	def get_prev(self): return self.menu.item_before(self)
 
 
+
 class PAMixerMenu(object):
 
 	def __init__(self, dbus_bridge, conf=None, fatal=False):
 		self.call, self.fatal = dbus_bridge.call, fatal
 		self.conf, self.items = conf or Conf(), OrderedDict()
 
-	def update_signal(self, name, obj):
+	def update_signal(self, name, obj): # XXX: do less than full refresh here
 		log.debug('update_signal << %s %s', name, obj)
 
 	@property
 	def item_list(self):
+		obj_paths_seen = set()
 		for obj_type, prop in [('sink', 'Sinks'), ('stream', 'PlaybackStreams')]:
 			'Get', [dbus_abbrev('pulse'), prop], 'props'
 			for obj_path in self.call('Get', [dbus_abbrev('pulse'), prop], iface='props'):
-				self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
+				obj_paths_seen.add(obj_path)
+				if obj_path not in self.items:
+					self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
+		for obj_path in set(self.items).difference(obj_paths_seen): del self.items[obj_path]
 		return self.items.values()
 
-	def item_after(self, item):
-		for k, item2 in self.items.viewitems():
-			if item is StopIteration: return item2
-			if k == item.dbus_path: item = StopIteration
+	def item_after(self, item=None):
+		if item:
+			for k, item2 in self.items.viewitems():
+				if item is StopIteration: return item2
+				if k == item.dbus_path: item = StopIteration
+		if self.items: return self.items.values()[0]
 
-	def item_before(self, item):
-		item_prev = None
-		for k, item2 in self.items.viewitems():
-			if k == item.dbus_path: return item_prev
-			item_prev = item2
+	def item_before(self, item=None):
+		if item:
+			item_prev = None
+			for k, item2 in self.items.viewitems():
+				if k == item.dbus_path:
+					if not item_prev: break
+					return item_prev
+				item_prev = item2
+		if self.items: return self.items.values()[-1]
 
 
 
@@ -542,6 +553,7 @@ class PAMixerUI(object):
 		if len(k) == 1: return ord(k)
 		return getattr(self.c, 'key_{}'.format(k).upper())
 
+
 	def _run(self, stdscr):
 		c, self.c_stdscr = self.c, stdscr
 		key_match = lambda key,*choices: key in map(self.c_key, choices)
@@ -549,29 +561,34 @@ class PAMixerUI(object):
 		c.curs_set(0)
 		c.use_default_colors()
 
-		win = self.c_win_init()
-		items = self.menu.item_list # XXX: dynamic
-		item_hl = next(iter(items)) if items else None
+		win, item_hl = self.c_win_init(), None
 		self.conf.adjust_step /= 100.0
 
 		while True:
-			self.c_win_draw(win, items, item_hl)
+			items = self.menu.item_list # XXX: full refresh on every keypress is a bit excessive
+			if item_hl not in items: item_hl = self.menu.item_after()
+			try: self.c_win_draw(win, items, item_hl)
+			except PAMixerDBusError as err: # XXX: check all the old pitfalls here
+				if err.args[0] == 'org.freedesktop.DBus.Error.UnknownMethod': continue
 
 			try: key = win.getch()
 			except KeyboardInterrupt: key = self.c_key('q')
 			except c.error: continue
-			key_name = c.keyname(key)
+			try: key_name = c.keyname(key)
+			except ValueError: key_name = 'unknown' # e.g. "-1"
 			log.debug('Keypress event: %s (%r)', key, key_name)
 
-			if key_match(key, 'up', 'k', 'p'): item_hl = item_hl.get_prev()
-			elif key_match(key, 'down', 'j', 'n'): item_hl = item_hl.get_next()
-			elif key_match(key, 'left', 'h', 'b'):
-				item_hl.volume_change(-self.conf.adjust_step)
-			elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
-			elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
-			elif key_name.isdigit(): # 1-0 keyboard row
-				item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
-			elif key_match(key, 'resize', '\f'):
+			if item_hl:
+				if key_match(key, 'up', 'k', 'p'): item_hl = item_hl.get_prev()
+				elif key_match(key, 'down', 'j', 'n'): item_hl = item_hl.get_next()
+				elif key_match(key, 'left', 'h', 'b'):
+					item_hl.volume_change(-self.conf.adjust_step)
+				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
+				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
+				elif key_name.isdigit(): # 1-0 keyboard row
+					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
+
+			if key_match(key, 'resize', '\f'):
 				c.endwin()
 				stdscr.refresh()
 				win = self.c_win_init()
@@ -658,6 +675,5 @@ def main(args=None):
 		log.debug('Starting curses ui loop...')
 		curses_ui.run()
 		log.debug('Finished')
-
 
 if __name__ == '__main__': sys.exit(main())
