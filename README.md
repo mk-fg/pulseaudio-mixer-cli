@@ -98,7 +98,7 @@ For example:
 Such config is totally optional, and might be useful in case default options
 aren't suitable for a specific setup and creating a shell alias or wrapper is
 too much trouble.
-For some extra config-only options, see "pulseaudio-mixer-cli.example.cfg".
+For some extra config-only options, see "pa-mixer-mk2.example.cfg".
 Commandline values override the ones defined in the config file.
 
 There is a shiny rewritten "pa-mixer-mk2.py" script version, which is probably
