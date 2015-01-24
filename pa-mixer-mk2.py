@@ -507,7 +507,7 @@ class PAMixerMenu(object):
 				else: obj_paths_gone.remove(obj_path)
 
 		for obj_path in obj_paths_gone: del self.items[obj_path]
-		if obj_paths_new: self.apply_stream_params(op.itemgetter(*obj_paths_new)(self.items))
+		if obj_paths_new: self.apply_stream_params(map(self.items.get, obj_paths_new))
 
 		# Sort sinks to be always on top
 		sinks, streams, ordered = list(), list(), True
