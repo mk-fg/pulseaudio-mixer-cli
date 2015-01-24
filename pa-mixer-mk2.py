@@ -6,7 +6,7 @@ import itertools as it, operator as op, functools as ft
 from collections import deque, OrderedDict
 import ConfigParser as configparser
 import os, sys, io, logging, re, time, types, string
-import json, subprocess, signal, fcntl, base64, hashlib
+import json, subprocess, signal, fcntl, errno, base64, hashlib
 
 
 class Conf(object):
@@ -19,19 +19,33 @@ class Conf(object):
 	placeholder_media_names = 'audio stream', 'AudioStream', 'Output'
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
+	stream_params = None
 
 def update_conf_from_file(conf, path_or_file):
-	if isinstance(path_or_file, types.StringTypes): path_or_file = io.open(path_or_file)
+	if isinstance(path_or_file, types.StringTypes): path_or_file = open(path_or_file)
 	with path_or_file as src:
-		config = configparser.SafeConfigParser(allow_no_value=True)
+		config = configparser.RawConfigParser(allow_no_value=True)
 		config.readfp(src)
+
 	for k in dir(conf):
-		if k.startswith('_'): continue
+		if k.startswith('_') or k in ['stream_params']: continue
 		v = getattr(conf, k)
 		get_val = config.getint if not isinstance(v, bool) else config.getboolean
 		for k_conf in k, k.replace('_', '-'):
 			try: setattr(conf, k, get_val('default', k_conf))
 			except configparser.Error: pass
+
+	conf.stream_params = OrderedDict(conf.stream_params or dict())
+	for sec in config.sections():
+		if not re.search(r'^stream\b.', sec): continue
+		params = list()
+		for k, v in config.items(sec):
+			match = re.search(r'^(match|equals)\[(.*)\]$', k)
+			if match:
+				v = re.compile(r'^{}$'.format(re.escape(v)) if match.group(1) == 'equals' else v)
+				params.append(('match', match.group(2), v))
+			else: params.append(('set', k, v))
+		conf.stream_params[sec] = params
 
 
 dbus_abbrevs = dict(
@@ -256,7 +270,10 @@ class PAMixerDBusBridge(object):
 			return self.loop.quit() # parent is gone, we're done too
 		elif ev & self._gobj.IO_IN:
 			while True:
-				chunk = self.stdin.read(2**20)
+				try: chunk = self.stdin.read(2**20)
+				except (OSError, IOError) as err:
+					if err.errno != errno.EAGAIN: raise
+					chunk = None
 				if not chunk: break
 				buff.append(chunk)
 			while True:
@@ -315,8 +332,8 @@ class PAMixerDBusBridge(object):
 		self._dbus, self._gobj = dbus, GObject
 
 		# Disable stdin/stdout buffering
-		self.stdout = io.open(sys.stdout.fileno(), 'wb', buffering=0)
-		self.stdin = io.open(sys.stdin.fileno(), 'rb', buffering=0)
+		self.stdout = os.fdopen(sys.stdout.fileno(), 'wb', 0)
+		self.stdin = os.fdopen(sys.stdin.fileno(), 'rb', 0)
 
 		self.stdout.write('ready\n') # wait for main process to get ready, signal readiness
 		log.debug('DBus signal handler thread started')
@@ -352,7 +369,15 @@ class PAMixerMenuItem(object):
 	def __init__(self, menu, obj_type, obj_path):
 		self.menu, self.t, self.conf, self.call = menu, obj_type, menu.conf, menu.call
 		self.dbus_path, self.dbus_type = obj_path, dbus_join('pulse', [self.dbus_types[self.t]])
+		self.props = self.call( 'Get',
+			[self.dbus_type, 'PropertyList'], obj=self.dbus_path, iface='props' )
 		self.name = self._get_name()
+
+		if self.conf.dump_stream_params:
+			from pprint import pprint
+			dump = OrderedDict(path=self.dbus_path, name=self.name)
+			dump['props'] = sorted(self.props.items())
+			pprint(dump.items(), sys.stderr)
 
 	def __repr__(self):
 		return '<{}[{:x}] {}[{}]: {}>'.format(
@@ -364,7 +389,7 @@ class PAMixerMenuItem(object):
 
 	def _get_name_descriptive(self):
 		'Can probably fail with KeyError if something is really wrong with stream/device props.'
-		props = self.call('Get', [self.dbus_type, 'PropertyList'], obj=self.dbus_path, iface='props')
+		props = self.props
 
 		if self.t == 'stream':
 			if self.conf.use_media_name:
@@ -446,15 +471,43 @@ class PAMixerMenu(object):
 	def update_signal(self, name, obj): # XXX: do less than full refresh here
 		log.debug('update_signal << %s %s', name, obj)
 
+	def apply_stream_params(self, items):
+		for item in items:
+			for sec, checks in self.conf.stream_params.viewitems():
+				match, params = True, OrderedDict()
+				for t, k, v in checks:
+					if t == 'match':
+						if match and not v.search(item.props.get(k, '')): match = False
+					elif t == 'set': params[k] = v
+					else: raise ValueError((t, k, v))
+				if match:
+					log.debug( 'Matched stream %r (name: %r)'
+						' to config section: %s', item.dbus_path, item.name, sec )
+					for k, v in params.viewitems():
+						m = re.search(r'^volume-(min|max|set)$', k)
+						if m:
+							vol = float(v)
+							if m.group(1) == 'max':
+								if item.volume > vol: item.volume = vol
+							elif m.group(1) == 'min':
+								if item.volume < vol: item.volume = vol
+							elif m.group(1) == 'set': item.volume = vol
+						else:
+							log.debug('Unrecognized stream parameter (section: %r): %r (value: %r)', sec, k, v)
+
 	@property
 	def item_list(self):
-		obj_paths_seen = set()
+		obj_paths_current, obj_paths_new, obj_paths_gone = set(), set(), set(self.items)
 		for obj_type, prop in [('sink', 'Sinks'), ('stream', 'PlaybackStreams')]:
 			for obj_path in self.call('Get', [dbus_abbrev('pulse'), prop], iface='props'):
-				obj_paths_seen.add(obj_path)
+				obj_paths_current.add(obj_path)
 				if obj_path not in self.items:
+					obj_paths_new.add(obj_path)
 					self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
-		for obj_path in set(self.items).difference(obj_paths_seen): del self.items[obj_path]
+				else: obj_paths_gone.remove(obj_path)
+
+		for obj_path in obj_paths_gone: del self.items[obj_path]
+		if obj_paths_new: self.apply_stream_params(op.itemgetter(*obj_paths_new)(self.items))
 
 		# Sort sinks to be always on top
 		sinks, streams, ordered = list(), list(), True
@@ -592,9 +645,10 @@ class PAMixerUI(object):
 		self.conf.adjust_step /= 100.0
 
 		while True:
-			items = self.menu.item_list # XXX: full refresh on every keypress is a bit excessive
-			if item_hl not in items: item_hl = self.menu.item_after()
-			try: self.c_win_draw(win, items, item_hl)
+			try:
+				items = self.menu.item_list # XXX: full refresh on every keypress is a bit excessive
+				if item_hl not in items: item_hl = self.menu.item_after()
+				self.c_win_draw(win, items, item_hl)
 			except PAMixerDBusError as err: # XXX: check all the old pitfalls here
 				if err.args[0] == 'org.freedesktop.DBus.Error.UnknownMethod': continue
 
@@ -640,7 +694,7 @@ def self_exec_cmd(*args):
 def main(args=None):
 	conf = Conf()
 	conf_file = os.path.expanduser('~/.pulseaudio-mixer-cli.cfg')
-	try: conf_file = io.open(conf_file)
+	try: conf_file = open(conf_file)
 	except (OSError, IOError) as err: pass
 	else: update_conf_from_file(conf, conf_file)
 
@@ -662,6 +716,8 @@ def main(args=None):
 		action='store_true', default=conf.verbose,
 		help='Dont close stderr to see any sort of errors (which'
 			' mess up curses interface, thus silenced that way by default).')
+	parser.add_argument('--dump-stream-params',
+		action='store_true', help='Dump all parameters for each stream to stderr.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	parser.add_argument('--debug-pipes', action='store_true',
 		help='Also logs chatter between parent/child pids. Very noisy, only useful with --debug.')
@@ -701,7 +757,9 @@ def main(args=None):
 	dbus_bridge.child_start()
 
 	with PAMixerUI(menu) as curses_ui:
-		if not opts.verbose and not opts.debug: sys.stderr.close() # any output will mess-up curses ui
+		# Any output will mess-up curses ui, so try to close sys.stderr if possible
+		if not opts.verbose and not opts.debug\
+			and not opts.dump_stream_params: sys.stderr.close()
 		log.debug('Starting curses ui loop...')
 		curses_ui.run()
 		log.debug('Finished')

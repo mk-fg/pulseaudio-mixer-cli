@@ -84,9 +84,9 @@ quit and "1"-"0" number row keys to set specific level (1=0%, 0=100%, only in
 pa-mixer-mk2).
 
 Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg" (see
-[ConfigParser docs](http://docs.python.org/2/library/configparser.html) for more
-details on format), which may contain definitions for any options, allowed on
-the command line in the "[default]" section.
+[RawConfigParser docs](http://docs.python.org/2/library/configparser.html) for
+more details on format), which may contain definitions for any options, allowed
+on the command line in the "[default]" section.
 
 For example:
 
@@ -98,7 +98,8 @@ For example:
 Such config is totally optional, and might be useful in case default options
 aren't suitable for a specific setup and creating a shell alias or wrapper is
 too much trouble.
-Commandline values override the ones defined in a config file.
+For some extra config-only options, see "pulseaudio-mixer-cli.example.cfg".
+Commandline values override the ones defined in the config file.
 
 There is a shiny rewritten "pa-mixer-mk2.py" script version, which is probably
 way less tested, but have some extra features, which I can't be bothered to
@@ -147,17 +148,6 @@ TODO
 --------------------
 
 All new features (or maybe bloat) go into "pa-mixer-mk2.py" script.
-
-- Add in-app storage and/or configuration of volume levels based on stream
-  parameters.
-
-  Use-case is basically forcing PA to drop volume to low for e.g. new streams,
-  instead of blasting your ears off every time "mpv" starts on a loud stream
-  (e.g. net radio) after volume for it has been upped in PA for a quiet "talk"
-  video.
-
-  Also, I still can't seem to fully get the logic (didn't look into code/modules
-  though) of PA setting the initial volumes, sometimes it seem rather arbitrary.
 
 - Check if stream name attribute can change over the stream lifetime (e.g. mpv
   online radio stream), listen for signals for such changes or poll stream name
