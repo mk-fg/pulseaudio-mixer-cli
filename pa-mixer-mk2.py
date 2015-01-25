@@ -5,7 +5,7 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from collections import deque, OrderedDict
 import ConfigParser as configparser
-import os, sys, io, logging, re, time, types, string
+import os, sys, io, logging, re, time, types, string, unicodedata
 import json, subprocess, signal, fcntl, errno, base64, hashlib
 
 
@@ -20,6 +20,7 @@ class Conf(object):
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
 	stream_params = None
+	broken_chars_replace = u'_'
 
 def update_conf_from_file(conf, path_or_file):
 	if isinstance(path_or_file, types.StringTypes): path_or_file = open(path_or_file)
@@ -28,9 +29,13 @@ def update_conf_from_file(conf, path_or_file):
 		config.readfp(src)
 
 	for k in dir(conf):
-		if k.startswith('_') or k in ['stream_params']: continue
+		if k.startswith('_'): continue
 		v = getattr(conf, k)
-		get_val = config.getint if not isinstance(v, bool) else config.getboolean
+		if isinstance(v, types.StringTypes):
+			get_val = lambda *a: force_str_type(config.get(*a), v)
+		elif isinstance(v, bool): get_val = config.getboolean
+		elif isinstance(v, (int, long)): get_val = config.getint
+		else: continue # values with other types cannot be specified in config
 		for k_conf in k, k.replace('_', '-'):
 			try: setattr(conf, k, get_val('default', k_conf))
 			except configparser.Error: pass
@@ -88,9 +93,31 @@ def force_unicode(bytes_or_unicode, encoding='utf-8', errors='replace'):
 	if isinstance(bytes_or_unicode, unicode): return bytes_or_unicode
 	return bytes_or_unicode.decode(encoding, errors)
 
+def force_str_type(bytes_or_unicode, val_or_type, **conv_kws):
+	if val_or_type is bytes or isinstance(val_or_type, bytes): f = force_bytes
+	elif val_or_type is unicode or isinstance(val_or_type, unicode): f = force_unicode
+	else: raise TypeError(val_or_type)
+	return f(bytes_or_unicode, **conv_kws)
+
 def to_bytes(obj, **conv_kws):
 	if not isinstance(obj, types.StringTypes): obj = bytes(obj)
-	return force_bytes(obj)
+	return force_bytes(obj, **conv_kws)
+
+def strip_noise_bytes( obj, replace=u'_', encoding='utf-8',
+		byte_errors='backslashreplace', unicode_errors='replace' ):
+	'''Converts obj to byte representation, making sure
+		there arent any random weird chars that dont belong to any alphabet.'''
+	if not isinstance(obj, types.StringTypes): obj = bytes(obj)
+	if isinstance(obj, bytes):
+		obj = force_unicode(obj, encoding=encoding, errors=byte_errors)
+	obj_ucs = list()
+	for uc in obj:
+		try: unicodedata.name(uc)
+		except ValueError:
+			if replace: obj_ucs.append(replace)
+		else: obj_ucs.append(uc)
+	obj = u''.join(obj_ucs)
+	return force_bytes(obj, encoding=encoding, errors=unicode_errors)
 
 
 
@@ -389,7 +416,9 @@ class PAMixerMenuItem(object):
 
 	def _get_name_descriptive(self):
 		'Can probably fail with KeyError if something is really wrong with stream/device props.'
-		props = self.props
+		props = dict(
+			(force_bytes(k), strip_noise_bytes(v, self.conf.broken_chars_replace))
+			for k,v in self.props.viewitems() )
 
 		if self.t == 'stream':
 			if self.conf.use_media_name:
