@@ -142,13 +142,3 @@ btw) - in that case neither dbus system nor session bus is accessed, since
 ServerLookup interface doesn't seem to be available on either one (at least in
 2.1), and pa-private bus is accessed via well-known socket location at
 /run/pulse/dbus-socket (see also [#4](https://github.com/mk-fg/pulseaudio-mixer-cli/issues/4)).
-
-
-TODO
---------------------
-
-All new features (or maybe bloat) go into "pa-mixer-mk2.py" script.
-
-- Check if stream name attribute can change over the stream lifetime (e.g. mpv
-  online radio stream), listen for signals for such changes or poll stream name
-  attr every few seconds (optionally).

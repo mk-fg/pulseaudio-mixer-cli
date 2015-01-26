@@ -35,6 +35,7 @@ def update_conf_from_file(conf, path_or_file):
 			get_val = lambda *a: force_str_type(config.get(*a), v)
 		elif isinstance(v, bool): get_val = config.getboolean
 		elif isinstance(v, (int, long)): get_val = config.getint
+		elif isinstance(v, float): get_val = lambda *a: float(config.get(*a))
 		else: continue # values with other types cannot be specified in config
 		for k_conf in k, k.replace('_', '-'):
 			try: setattr(conf, k, get_val('default', k_conf))
@@ -133,10 +134,12 @@ class PAMixerDBusBridge(object):
 
 	signal = signal.SIGUSR1 # used to break curses loop in the parent pid
 	log_pipes = False # very noisy, but useful to see all chatter between parent/child
+	handle_proplist_updates = False
 
-	def __init__(self, child_cmd=None, fatal=False):
+	def __init__(self, child_cmd=None, fatal=False, log_pipes=False):
 		self.child_cmd, self.core_pid, self.fatal = child_cmd, os.getppid(), fatal
 		self.child_sigs, self.child_calls, self._child, self._child_gc = deque(), dict(), None, set()
+		self.log_pipes = log_pipes
 
 
 	def _child_readline(self, wait_for_cid=None, one_signal=False, init_line=False):
@@ -166,6 +169,7 @@ class PAMixerDBusBridge(object):
 			log.exception('Failed to encode data to json (error: %s), returning None: %r', err, call)
 			return None
 		assert '\n' not in call, repr(call)
+		res = Exception
 		for n in xrange(2): # even 2 is kinda generous - likely to be some bug
 			try:
 				if self.log_pipes: log.debug('rpc-parent(raw) >> %r', call)
@@ -177,7 +181,8 @@ class PAMixerDBusBridge(object):
 				self.child_kill()
 				self.child_check_restart()
 			else: break
-		else: raise PAMixerDBusBridgeError('Failed to communicate with child pid')
+		if res is Exception:
+			raise PAMixerDBusBridgeError('Failed to communicate with child pid')
 		if res['t'] == 'call_error': raise PAMixerDBusError(res['err_type'], res['err_msg'])
 		assert res['t'] == 'call_result', res
 		return res['val']
@@ -193,7 +198,7 @@ class PAMixerDBusBridge(object):
 		if not self.child_sigs: self._child_readline(one_signal=True)
 		while self.child_sigs:
 			line = self.child_sigs.popleft()
-			self.signal_func(line['name'], line['obj'])
+			self.signal_func(**line)
 
 
 	def child_start(self, gc_old_one=False):
@@ -342,8 +347,12 @@ class PAMixerDBusBridge(object):
 			log.warn('Unrecognized event type from glib: %r', ev)
 
 	@_glib_err_wrap
-	def _relay_signal(self, obj_path, sig_name):
-		self._core_notify(_signal=True, t='signal', name=sig_name, obj=obj_path)
+	def _relay_signal(self, data=None, sig_name=None, src_obj_path=None):
+		if sig_name == 'PropertyListUpdated':
+			self._core_notify( _signal=True, t='signal',
+				name='PropertyListUpdated', obj=src_obj_path, props=strip_dbus_types(data) )
+		else:
+			self._core_notify(_signal=True, t='signal', name=sig_name, obj=data)
 
 
 	def child_run(self):
@@ -378,9 +387,13 @@ class PAMixerDBusBridge(object):
 			self._gobj.IO_IN | self._gobj.IO_ERR | self._gobj.IO_HUP,
 			ft.partial(self._rpc_call, rpc_buffer) )
 
-		for sig_name in [
-				'NewSink', 'SinkRemoved', 'NewPlaybackStream', 'PlaybackStreamRemoved']:
-			self.bus.add_signal_receiver(ft.partial(self._relay_signal, sig_name=sig_name), sig_name)
+		signals = ['NewSink', 'SinkRemoved', 'NewPlaybackStream', 'PlaybackStreamRemoved']
+		if self.handle_proplist_updates: signals.append('Stream.PropertyListUpdated')
+		for sig_name in signals:
+			sig_name_last = sig_name.rsplit('.')[-1]
+			self.bus.add_signal_receiver(
+				ft.partial(self._relay_signal, sig_name=sig_name_last),
+				sig_name_last, path_keyword='src_obj_path' )
 			self.core.ListenForSignal(
 				'org.PulseAudio.Core1.{}'.format(sig_name), self._dbus.Array(signature='o') )
 		self.loop.run()
@@ -396,9 +409,7 @@ class PAMixerMenuItem(object):
 	def __init__(self, menu, obj_type, obj_path):
 		self.menu, self.t, self.conf, self.call = menu, obj_type, menu.conf, menu.call
 		self.dbus_path, self.dbus_type = obj_path, dbus_join('pulse', [self.dbus_types[self.t]])
-		self.props = self.call( 'Get',
-			[self.dbus_type, 'PropertyList'], obj=self.dbus_path, iface='props' )
-		self.name = self._get_name()
+		self.update_name()
 
 		if self.conf.dump_stream_params:
 			from pprint import pprint
@@ -406,10 +417,22 @@ class PAMixerMenuItem(object):
 			dump['props'] = sorted(self.props.items())
 			pprint(dump.items(), sys.stderr)
 
+	def _prop_get(self, k):
+		# XXX: grab Name for Device and such
+		try: return self.call('Get', [self.dbus_type, k], obj=self.dbus_path, iface='props')
+		except PAMixerDBusError as err:
+			if err.args[0] == 'org.PulseAudio.Core1.NoSuchPropertyError': return None
+			raise
+
 	def __repr__(self):
 		return '<{}[{:x}] {}[{}]: {}>'.format(
 			self.__class__.__name__, id(self), self.t, uid_str(self.dbus_path), self.name )
 
+
+	def update_name(self, props_update=None):
+		if props_update is None: self.props = self._prop_get('PropertyList')
+		else: self.props.update(props_update)
+		self.name = force_unicode(self._get_name())
 
 	def _get_name_unique(self, name):
 		return '{} #{}'.format(force_bytes(name), uid_str())
@@ -496,9 +519,44 @@ class PAMixerMenu(object):
 	def __init__(self, dbus_bridge, conf=None, fatal=False):
 		self.call, self.fatal = dbus_bridge.call, fatal
 		self.conf, self.items = conf or Conf(), OrderedDict()
+		self._update_lock = self._update_signal = False
 
-	def update_signal(self, name, obj): # XXX: do less than full refresh here
+	def update(self):
+		self._update_lock, self._update_signal = True, False
+
+		obj_paths_current, obj_paths_new, obj_paths_gone = set(), set(), set(self.items)
+		for obj_type, prop in [('sink', 'Sinks'), ('stream', 'PlaybackStreams')]:
+			for obj_path in self.call('Get', [dbus_abbrev('pulse'), prop], iface='props'):
+				obj_paths_current.add(obj_path)
+				if obj_path not in self.items:
+					obj_paths_new.add(obj_path)
+					self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
+				else: obj_paths_gone.remove(obj_path)
+
+		for obj_path in obj_paths_gone: del self.items[obj_path]
+		if obj_paths_new: self.apply_stream_params(map(self.items.get, obj_paths_new))
+
+		# Sort sinks to be always on top
+		sinks, streams, ordered = list(), list(), True
+		for obj_path, item in self.items.viewitems():
+			if item.t == 'sink':
+				if streams: ordered = False
+				sinks.append((obj_path, item))
+			else: streams.append((obj_path, item))
+		if not ordered:
+			self.items.clear()
+			for obj_path, item in it.chain(sinks, streams): self.items[obj_path] = item
+
+		while self._update_signal: self.update() # change was signaled during update
+		self._update_lock = False
+
+	def update_signal(self, name, obj, props=None, **signal_kws):
+		# XXX: do less than full refresh here
 		log.debug('update_signal << %s %s', name, obj)
+		if self._update_lock: self._update_signal = True
+		elif name == 'PropertyListUpdated':
+			item = self.items.get(obj)
+			if item: item.update_name(props_update=props)
 
 	def apply_stream_params(self, items):
 		for item in items:
@@ -526,29 +584,7 @@ class PAMixerMenu(object):
 
 	@property
 	def item_list(self):
-		obj_paths_current, obj_paths_new, obj_paths_gone = set(), set(), set(self.items)
-		for obj_type, prop in [('sink', 'Sinks'), ('stream', 'PlaybackStreams')]:
-			for obj_path in self.call('Get', [dbus_abbrev('pulse'), prop], iface='props'):
-				obj_paths_current.add(obj_path)
-				if obj_path not in self.items:
-					obj_paths_new.add(obj_path)
-					self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
-				else: obj_paths_gone.remove(obj_path)
-
-		for obj_path in obj_paths_gone: del self.items[obj_path]
-		if obj_paths_new: self.apply_stream_params(map(self.items.get, obj_paths_new))
-
-		# Sort sinks to be always on top
-		sinks, streams, ordered = list(), list(), True
-		for obj_path, item in self.items.viewitems():
-			if item.t == 'sink':
-				if streams: ordered = False
-				sinks.append((obj_path, item))
-			else: streams.append((obj_path, item))
-		if not ordered:
-			self.items.clear()
-			for obj_path, item in it.chain(sinks, streams): self.items[obj_path] = item
-
+		self.update()
 		return self.items.values()
 
 	def item_after(self, item=None):
@@ -636,18 +672,20 @@ class PAMixerUI(object):
 			item_len_max = max(self.item_len_min, item_len_max + bar_len - self.bar_len_min)
 			bar_len = win_len - item_len_max - mute_button_len - len(self.bar_caps_func())
 			if bar_len <= 0: item_len_max = win_len # just draw labels
-			if item_len_max < self.item_len_min:
-				item_len_max = min(max(len(item.name) for item in items), win_len)
+			if item_len_max < self.item_len_min: item_len_max = max(len(item.name) for item in items)
 
 		for row, item in enumerate(items):
 			if row >= win_rows - 1: break # not sure why bottom window row seem to be unusable
 			row += pad_y
 
 			attrs = self.c.A_REVERSE if item is item_hl else self.c.A_NORMAL
+			name_uni = item.name[:item_len_max]
+			name_bytes = force_bytes(name_uni)
+			name_len_delta = len(name_bytes) - len(name_uni) # ncurses+unicode issue
 
 			win.addstr(row, 0, ' ' * pad_x)
-			win.addstr(row, pad_x, force_bytes(item.name[:item_len_max]), attrs)
-			item_name_end = item_len_max + pad_x
+			win.addstr(row, pad_x, name_bytes, attrs)
+			item_name_end = item_len_max + pad_x + name_len_delta
 			if win_len > item_name_end + mute_button_len:
 				if item.muted: mute_button = " M"
 				else: mute_button = " -"
@@ -678,8 +716,9 @@ class PAMixerUI(object):
 				items = self.menu.item_list # XXX: full refresh on every keypress is a bit excessive
 				if item_hl not in items: item_hl = self.menu.item_after()
 				self.c_win_draw(win, items, item_hl)
-			except PAMixerDBusError as err: # XXX: check all the old pitfalls here
+			except PAMixerDBusError as err:
 				if err.args[0] == 'org.freedesktop.DBus.Error.UnknownMethod': continue
+				raise # XXX: check all the old pitfalls here
 
 			try: key = win.getch()
 			except KeyboardInterrupt: key = self.c_key('q')
@@ -758,16 +797,16 @@ def main(args=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	for k,v in vars(opts).viewitems(): setattr(conf, k, v)
-	opts = conf # to make sure there's no duality of any kind
+	del opts
 
 	global log, print
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	logging.basicConfig(level=logging.DEBUG if conf.debug else logging.WARNING)
 	log = logging.getLogger()
 	print = ft.partial(print, file=sys.stderr) # stdout is used by curses or as a pipe (child)
 
-	if opts.child_pid_do_not_use:
-		dbus_bridge = PAMixerDBusBridge()
-		if opts.debug_pipes: dbus_bridge.log_pipes = True
+	if conf.child_pid_do_not_use:
+		dbus_bridge = PAMixerDBusBridge(log_pipes=conf.debug_pipes)
+		if conf.use_media_name: dbus_bridge.handle_proplist_updates = True
 		try: return dbus_bridge.child_run()
 		except PAMixerDBusBridgeError as err:
 			log.info('PAMixerDBusBridgeError event in a child pid: %s', err)
@@ -776,19 +815,21 @@ def main(args=None):
 			os.execvp(*argv)
 
 	dbus_bridge = ['--child-pid-do-not-use']
-	if opts.debug:
+	if conf.debug:
 		dbus_bridge += ['--debug']
-		if opts.debug_pipes: dbus_bridge += ['--debug-pipes']
-	dbus_bridge = PAMixerDBusBridge(self_exec_cmd(*dbus_bridge), fatal=opts.fatal)
-	if opts.debug_pipes: dbus_bridge.log_pipes = True
-	menu = PAMixerMenu(dbus_bridge, conf, fatal=opts.fatal)
+		if conf.debug_pipes: dbus_bridge += ['--debug-pipes']
+	if conf.use_media_name: dbus_bridge += ['--use-media-name']
+	dbus_bridge = PAMixerDBusBridge(
+		self_exec_cmd(*dbus_bridge), fatal=conf.fatal, log_pipes=conf.debug_pipes )
+
+	menu = PAMixerMenu(dbus_bridge, conf, fatal=conf.fatal)
 	dbus_bridge.install_signal_handler(menu.update_signal)
 	dbus_bridge.child_start()
 
 	with PAMixerUI(menu) as curses_ui:
 		# Any output will mess-up curses ui, so try to close sys.stderr if possible
-		if not opts.verbose and not opts.debug\
-			and not opts.dump_stream_params: sys.stderr.close()
+		if not conf.verbose and not conf.debug\
+			and not conf.dump_stream_params: sys.stderr.close()
 		log.debug('Starting curses ui loop...')
 		curses_ui.run()
 		log.debug('Finished')
