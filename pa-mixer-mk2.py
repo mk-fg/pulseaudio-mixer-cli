@@ -15,6 +15,7 @@ class Conf(object):
 	adjust_step = 5
 	max_level = 2 ** 16 # absolute value (as used in PA), displayed as "100%"
 	min_level = 0 # absolute value (as used in PA), displayed as "0%"
+	use_device_name = False
 	use_media_name = False
 	placeholder_media_names = 'audio stream', 'AudioStream', 'Output'
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
@@ -439,7 +440,7 @@ class PAMixerMenuItem(object):
 
 	def _get_name_descriptive(self):
 		'Can probably fail with KeyError if something is really wrong with stream/device props.'
-		props = dict(
+		ext, props = None, dict(
 			(force_bytes(k), strip_noise_bytes(v, self.conf.broken_chars_replace))
 			for k,v in self.props.viewitems() )
 
@@ -454,22 +455,25 @@ class PAMixerMenuItem(object):
 				'{application.process.host}:{application.process.id})'
 
 		elif self.t == 'sink':
-			name = props.get('alsa.id')
-			if not name:
-				try: name = '{}.{}'.format(props['device.api'], props['device.string'])
-				except KeyError:
-					self._get_name_unique(props['device.description'])
-			ext = '({device.profile.name}@{alsa.driver_name})'
+			if self.conf.use_device_name: name = self._prop_get('Name')
+			else:
+				name = props.get('alsa.id')
+				if not name:
+					try: name = '{}.{}'.format(props['device.api'], props['device.string'])
+					except KeyError:
+						self._get_name_unique(props['device.description'])
+				ext = '({device.profile.name}@{alsa.driver_name})'
 
 		else: raise KeyError('Unknown menu-item type (for naming): {}'.format(self.t))
 
-		try:
-			name = '{} {}'.format( name,
-				re.sub(r'\{([^}]+)\}', r'{}', ext).format(
-					*op.itemgetter(*re.findall(r'\{([^}]+)\}', ext))(props) ) )
-		except KeyError as err:
-			log.debug( 'Unable to get extended descriptive name'
-				' (trype: %r, path: %s) due to missing key: %s', self.t, self.dbus_path, err )
+		if ext:
+			try:
+				name = '{} {}'.format( name,
+					re.sub(r'\{([^}]+)\}', r'{}', ext).format(
+						*op.itemgetter(*re.findall(r'\{([^}]+)\}', ext))(props) ) )
+			except KeyError as err:
+				log.debug( 'Unable to get extended descriptive name'
+					' (trype: %r, path: %s) due to missing key: %s', self.t, self.dbus_path, err )
 		return name
 
 	def _get_name(self):
