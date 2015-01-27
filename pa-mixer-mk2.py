@@ -164,7 +164,10 @@ class PAMixerDBusBridge(object):
 					if line is None: line = '' # make sure to break the loop here
 				else:
 					if not ev & select.EPOLLIN: raise IOError('Poll returned error event: {}'.format(ev))
-					chunk = self._child.stdout.read()
+					try: chunk = self._child.stdout.read(2**20)
+					except IOError as err:
+						if err.errno != errno.EAGAIN: raise
+						continue
 					if '\n' in chunk:
 						line, chunk = chunk.split('\n', 1)
 						line = ''.join(it.chain(self.line_buff, [line]))
@@ -243,9 +246,10 @@ class PAMixerDBusBridge(object):
 	@_child.setter
 	def _child(self, proc):
 		if self._child_proc: self.poller.unregister(self._child_proc.stdout)
-		flags = fcntl.fcntl(proc.stdout, fcntl.F_GETFL)
-		fcntl.fcntl(proc.stdout, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-		self.poller.register(proc.stdout, select.EPOLLIN)
+		if proc:
+			flags = fcntl.fcntl(proc.stdout, fcntl.F_GETFL)
+			fcntl.fcntl(proc.stdout, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+			self.poller.register(proc.stdout, select.EPOLLIN)
 		self._child_proc = proc
 
 	def child_start(self, gc_old_one=False):
@@ -342,8 +346,7 @@ class PAMixerDBusBridge(object):
 		try:
 			if _signal: os.kill(self.core_pid, self.signal)
 			self.stdout.write('{}\n'.format(chunk))
-		except (OSError, IOError):
-			return self.loop.quit() # parent is gone, we're done too
+		except IOError: return self.loop.quit() # parent is gone, we're done too
 
 	@_glib_err_wrap
 	def _rpc_call(self, buff, stream=None, ev=None):
@@ -355,7 +358,7 @@ class PAMixerDBusBridge(object):
 		elif ev & self._gobj.IO_IN:
 			while True:
 				try: chunk = self.stdin.read(2**20)
-				except (OSError, IOError) as err:
+				except IOError as err:
 					if err.errno != errno.EAGAIN: raise
 					chunk = None
 				if not chunk: break
