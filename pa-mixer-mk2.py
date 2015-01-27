@@ -5,8 +5,8 @@ from __future__ import print_function
 import itertools as it, operator as op, functools as ft
 from collections import deque, OrderedDict
 import ConfigParser as configparser
-import os, sys, io, logging, re, time, types, string, unicodedata
-import json, subprocess, signal, fcntl, errno, base64, hashlib
+import os, sys, io, logging, re, time, types, string, unicodedata, random
+import json, subprocess, signal, fcntl, select, errno, base64, hashlib
 
 
 class Conf(object):
@@ -80,11 +80,12 @@ def strip_dbus_types(data):
 		' {} (mro: {}, value: {})' ).format(type(data), type(data).mro(), data))
 
 
-def uid_str(seed=None, length=4):
+def uid_str( seed=None, length=4,
+		_seed_gen=it.chain.from_iterable(it.imap(xrange, it.repeat(2**30))) ):
 	seed_bytes = length * 6 / 8
 	assert seed_bytes * 8 / 6 == length, [length, seed_bytes]
-	if seed is None: seed = os.urandom(seed_bytes)
-	else: seed = hashlib.sha256(seed).digest()[:seed_bytes]
+	if seed is None: seed = '\0\0\0{:08x}'.format(next(_seed_gen))
+	seed = hashlib.sha256(seed).digest()[:seed_bytes]
 	return base64.urlsafe_b64encode(seed)
 
 def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
@@ -134,23 +135,53 @@ class PAMixerDBusBridge(object):
 			with signal sent to parent pid on any dbus async event (e.g. signal) from child.'''
 
 	signal = signal.SIGUSR1 # used to break curses loop in the parent pid
+	poller = wakeup_fd = None
 	log_pipes = False # very noisy, but useful to see all chatter between parent/child
 	handle_proplist_updates = False
+	child_calls_cleanup = 0.05, 20.0 # chance, timeout
 
 	def __init__(self, child_cmd=None, fatal=False, log_pipes=False):
 		self.child_cmd, self.core_pid, self.fatal = child_cmd, os.getppid(), fatal
-		self.child_sigs, self.child_calls, self._child, self._child_gc = deque(), dict(), None, set()
-		self.log_pipes = log_pipes
+		self.child_sigs, self.child_calls, self._child_gc = deque(), dict(), set()
+		self.line_buff, self.log_pipes = deque(), log_pipes
 
+
+	def _child_readline_poll(self):
+		'child.stdout.readline() that also reacts to signals.'
+		# One shitty ipc instead of another... good job!
+		line = None
+		if self.line_buff and '\n' in self.line_buff[0]:
+			line, self.line_buff[0] = self.line_buff[0].split('\n', 1)
+		while True:
+			if line is not None: return line
+			evs = self.poller.poll()
+			for fd, ev in evs:
+				if fd == self.wakeup_fd.fileno():
+					self.wakeup_fd.read(1)
+					line = '' # make sure to break the loop here
+				else:
+					if not ev & select.EPOLLIN: raise IOError('Poll returned error event: {}'.format(ev))
+					chunk = self._child.stdout.read()
+					if '\n' in chunk:
+						line, chunk = chunk.split('\n', 1)
+						line = ''.join(it.chain(self.line_buff, [line]))
+						self.line_buff.clear()
+					self.line_buff.append(chunk)
 
 	def _child_readline(self, wait_for_cid=None, one_signal=False, init_line=False):
 		while True:
 			if wait_for_cid and wait_for_cid in self.child_calls:
 				# XXX: check for errors indicating that dbus is gone here?
-				line = self.child_calls[wait_for_cid]
-				self.child_calls.clear()
+				line_ts, line = self.child_calls.pop(wait_for_cid)
+				if random.random() < self.child_calls_cleanup[0]:
+					ts_deadline = time.time() - self.child_calls_cleanup[1]
+					for k, (line_ts, line) in self.child_calls.items():
+						if line_ts < ts_deadline: self.child_calls.pop(k, None)
 				return line
-			line = self._child.stdout.readline().strip()
+
+			line = self._child_readline_poll().strip()
+			if not line: continue # likely a break on signal
+
 			if init_line:
 				assert line.strip() == 'ready', repr(line)
 				break
@@ -159,7 +190,8 @@ class PAMixerDBusBridge(object):
 			if line['t'] == 'signal':
 				self.child_sigs.append(line)
 				if one_signal: break
-			elif line['t'] in ['call_result', 'call_error']: self.child_calls[line['cid']] = line
+			elif line['t'] in ['call_result', 'call_error']:
+				self.child_calls[line['cid']] = time.time(), line
 
 	def call(self, func, args, **call_kws):
 		self.child_check_restart()
@@ -202,7 +234,23 @@ class PAMixerDBusBridge(object):
 			self.signal_func(**line)
 
 
+	_child_proc = None
+	@property
+	def _child(self): return self._child_proc
+	@_child.setter
+	def _child(self, proc):
+		if self._child_proc: self.poller.unregister(self._child_proc.stdout)
+		flags = fcntl.fcntl(proc.stdout, fcntl.F_GETFL)
+		fcntl.fcntl(proc.stdout, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+		self.poller.register(proc.stdout, select.EPOLLIN)
+		self._child_proc = proc
+
 	def child_start(self, gc_old_one=False):
+		if self.poller is None:
+			self.poller, (r, w) = select.epoll(), os.pipe()
+			signal.set_wakeup_fd(w)
+			self.wakeup_fd = os.fdopen(r, 'rb', 0)
+			self.poller.register(self.wakeup_fd, select.EPOLLIN)
 		if self._child and gc_old_one:
 			self._child.wait()
 			self._child = None
