@@ -154,11 +154,14 @@ class PAMixerDBusBridge(object):
 			line, self.line_buff[0] = self.line_buff[0].split('\n', 1)
 		while True:
 			if line is not None: return line
-			evs = self.poller.poll()
+			try: evs = self.poller.poll() # XXX: some timeout here
+			except IOError as err:
+				if err.errno != errno.EINTR: raise
+				return ''
 			for fd, ev in evs:
 				if fd == self.wakeup_fd.fileno():
 					self.wakeup_fd.read(1)
-					line = '' # make sure to break the loop here
+					if line is None: line = '' # make sure to break the loop here
 				else:
 					if not ev & select.EPOLLIN: raise IOError('Poll returned error event: {}'.format(ev))
 					chunk = self._child.stdout.read()
@@ -246,7 +249,7 @@ class PAMixerDBusBridge(object):
 		self._child_proc = proc
 
 	def child_start(self, gc_old_one=False):
-		if self.poller is None:
+		if not self.poller:
 			self.poller, (r, w) = select.epoll(), os.pipe()
 			signal.set_wakeup_fd(w)
 			self.wakeup_fd = os.fdopen(r, 'rb', 0)
