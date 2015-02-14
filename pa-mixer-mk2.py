@@ -109,14 +109,17 @@ def to_bytes(obj, **conv_kws):
 def strip_noise_bytes( obj, replace=u'_', encoding='utf-8',
 		byte_errors='backslashreplace', unicode_errors='replace' ):
 	'''Converts obj to byte representation, making sure
-		there arent any random weird chars that dont belong to any alphabet.'''
+			there arent any random weird chars that dont belong to any alphabet.
+		Only ascii non-letters are allowed, as fancy symbols don't seem to work too.'''
 	if not isinstance(obj, types.StringTypes): obj = bytes(obj)
 	if isinstance(obj, bytes):
 		obj = force_unicode(obj, encoding=encoding, errors=byte_errors)
 	obj_ucs = list()
 	for uc in obj:
-		try: unicodedata.name(uc)
-		except ValueError:
+		try:
+			unicodedata.name(uc)
+			if unicodedata.category(uc) != 'Ll': uc.encode('ascii')
+		except (ValueError, UnicodeEncodeError):
 			if replace: obj_ucs.append(replace)
 		else: obj_ucs.append(uc)
 	obj = u''.join(obj_ucs)
