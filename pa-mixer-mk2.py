@@ -653,7 +653,7 @@ class PAMixerMenu(object):
 			for k, item2 in self.items.viewitems():
 				if item is StopIteration: return item2
 				if k == item.dbus_path: item = StopIteration
-		if self.items: return self.items.values()[0]
+		if self.items: return self.items.values()[-1]
 
 	def item_before(self, item=None):
 		if item:
