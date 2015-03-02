@@ -22,6 +22,8 @@ class Conf(object):
 	verbose = False
 	stream_params = None
 	broken_chars_replace = u'_'
+	focus_default = 'first' # either "first" or "last"
+	# focus_latest_stream = True
 
 def update_conf_from_file(conf, path_or_file):
 	if isinstance(path_or_file, types.StringTypes): path_or_file = open(path_or_file)
@@ -577,6 +579,8 @@ class PAMixerMenuItem(object):
 
 class PAMixerMenu(object):
 
+	focus_policies = dict(first=op.itemgetter(0), last=op.itemgetter(-1))
+
 	def __init__(self, dbus_bridge, conf=None, fatal=False):
 		self.call, self.fatal = dbus_bridge.call, fatal
 		self.conf, self.items = conf or Conf(), OrderedDict()
@@ -648,12 +652,17 @@ class PAMixerMenu(object):
 		self.update()
 		return self.items.values()
 
+	def item_default(self):
+		if not self.items: return
+		func = self.focus_policies[self.conf.focus_default]
+		return func(self.items.values())
+
 	def item_after(self, item=None):
 		if item:
 			for k, item2 in self.items.viewitems():
 				if item is StopIteration: return item2
 				if k == item.dbus_path: item = StopIteration
-		if self.items: return self.items.values()[-1]
+		return self.item_default()
 
 	def item_before(self, item=None):
 		if item:
@@ -663,7 +672,7 @@ class PAMixerMenu(object):
 					if not item_prev: break
 					return item_prev
 				item_prev = item2
-		if self.items: return self.items.values()[-1]
+		return self.item_default()
 
 
 
@@ -775,7 +784,7 @@ class PAMixerUI(object):
 		while True:
 			try:
 				items = self.menu.item_list # XXX: full refresh on every keypress is a bit excessive
-				if item_hl not in items: item_hl = self.menu.item_after()
+				if item_hl not in items: item_hl = self.menu.item_default()
 				self.c_win_draw(win, items, item_hl)
 			except PAMixerDBusError as err:
 				if err.args[0] == 'org.freedesktop.DBus.Error.UnknownMethod': continue
