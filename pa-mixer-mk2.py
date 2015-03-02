@@ -132,6 +132,7 @@ def strip_noise_bytes( obj, replace=u'_', encoding='utf-8',
 
 class PAMixerDBusBridgeError(Exception): pass
 class PAMixerDBusError(Exception): pass
+class PAMixerIPCError(Exception): pass
 
 class PAMixerDBusBridge(object):
 	'''Class to import/spawn glib/dbus eventloop in a
@@ -144,6 +145,8 @@ class PAMixerDBusBridge(object):
 	poller = wakeup_fd = None
 	log_pipes = False # very noisy, but useful to see all chatter between parent/child
 	handle_proplist_updates = False
+	poll_timeout = 1.0 # for recovery from race conditions, should be small
+	proxy_call_timeout = 20.0 # to crash instead of hangs
 	child_calls_cleanup = 0.05, 20.0 # chance, timeout
 
 	def __init__(self, child_cmd=None, fatal=False, log_pipes=False):
@@ -160,10 +163,16 @@ class PAMixerDBusBridge(object):
 			line, self.line_buff[0] = self.line_buff[0].split('\n', 1)
 		while True:
 			if line is not None: return line
-			try: evs = self.poller.poll() # XXX: some timeout here
+			try: evs = self.poller.poll(self.poll_timeout) or list()
 			except IOError as err:
 				if err.errno != errno.EINTR: raise
 				return ''
+			except KeyboardInterrupt: # ^C in console, probably because UI hangs
+				raise PAMixerIPCError('Poll call interrupted')
+			if not evs:
+				log.debug( 'Parent poll timeout event,'
+					' likely a race condition bug (timeout: %.1fs)', self.poll_timeout )
+				line = ''
 			for fd, ev in evs:
 				if fd == self.wakeup_fd.fileno():
 					self.wakeup_fd.read(1)
@@ -181,6 +190,7 @@ class PAMixerDBusBridge(object):
 					self.line_buff.append(chunk)
 
 	def _child_readline(self, wait_for_cid=None, one_signal=False, init_line=False):
+		ts0 = time.time()
 		while True:
 			if wait_for_cid and wait_for_cid in self.child_calls:
 				# XXX: check for errors indicating that dbus is gone here?
@@ -191,8 +201,16 @@ class PAMixerDBusBridge(object):
 						if line_ts < ts_deadline: self.child_calls.pop(k, None)
 				return line
 
-			line = self._child_readline_poll().strip()
-			if not line: continue # likely a break on signal
+			try:
+				line = self._child_readline_poll().strip()
+				if not line: # likely a break on signal, shouldn't be too often
+					if time.time() - ts0 > self.proxy_call_timeout:
+						raise PAMixerIPCError('Call timeout: {:.2f}s'.format(self.proxy_call_timeout))
+					continue
+			except PAMixerIPCError as err:
+				raise PAMixerIPCError(
+					'IPC error while waiting for event {!r} (line_buff: {!r}): {}'\
+					.format(dict(wait_for_cid=wait_for_cid, one_signal=one_signal), self.line_buff, err) )
 
 			if init_line:
 				assert line.strip() == 'ready', repr(line)
@@ -812,7 +830,8 @@ class PAMixerUI(object):
 			try:
 				# XXX: full refresh on every keypress is a bit excessive
 				items, item_hl = self.menu.item_list, self.item_hl
-				if item_hl not in items: self.item_hl = item_hl = self.menu.item_default()
+				if item_hl is None: item_hl = self.item_hl = self.menu.item_default()
+				if item_hl not in items: item_hl = self.menu.item_default()
 				self.c_win_draw(win, items, item_hl)
 			except PAMixerDBusError as err:
 				if err.args[0] == 'org.freedesktop.DBus.Error.UnknownMethod': continue
