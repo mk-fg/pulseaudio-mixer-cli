@@ -6,7 +6,7 @@ import itertools as it, operator as op, functools as ft
 from collections import deque, OrderedDict
 import ConfigParser as configparser
 import os, sys, io, logging, re, time, types, string, unicodedata, random
-import json, subprocess, signal, fcntl, select, errno, base64, hashlib
+import json, subprocess, signal, fcntl, select, errno, base64, hashlib, weakref
 
 
 class Conf(object):
@@ -23,7 +23,8 @@ class Conf(object):
 	stream_params = None
 	broken_chars_replace = u'_'
 	focus_default = 'first' # either "first" or "last"
-	# focus_latest_stream = True
+	focus_new_items = True
+	focus_new_items_delay = 5.0 # min seconds since last focus change to trigger this
 
 def update_conf_from_file(conf, path_or_file):
 	if isinstance(path_or_file, types.StringTypes): path_or_file = open(path_or_file)
@@ -584,6 +585,7 @@ class PAMixerMenu(object):
 	def __init__(self, dbus_bridge, conf=None, fatal=False):
 		self.call, self.fatal = dbus_bridge.call, fatal
 		self.conf, self.items = conf or Conf(), OrderedDict()
+		self.item_ts = weakref.WeakKeyDictionary()
 		self._update_lock = self._update_signal = False
 
 	def update(self):
@@ -599,7 +601,11 @@ class PAMixerMenu(object):
 				else: obj_paths_gone.remove(obj_path)
 
 		for obj_path in obj_paths_gone: del self.items[obj_path]
-		if obj_paths_new: self.apply_stream_params(map(self.items.get, obj_paths_new))
+		if obj_paths_new:
+			items, ts = map(self.items.get, obj_paths_new), time.time()
+			for item in items:
+				self.apply_stream_params(item)
+				self.item_ts[item] = ts
 
 		# Sort sinks to be always on top
 		sinks, streams, ordered = list(), list(), True
@@ -623,29 +629,28 @@ class PAMixerMenu(object):
 			item = self.items.get(obj)
 			if item: item.update_name(props_update=props)
 
-	def apply_stream_params(self, items):
-		for item in items:
-			for sec, checks in self.conf.stream_params.viewitems():
-				match, params = True, OrderedDict()
-				for t, k, v in checks:
-					if t == 'match':
-						if match and not v.search(item.props.get(k, '')): match = False
-					elif t == 'set': params[k] = v
-					else: raise ValueError((t, k, v))
-				if match:
-					log.debug( 'Matched stream %r (name: %r)'
-						' to config section: %s', item.dbus_path, item.name, sec )
-					for k, v in params.viewitems():
-						m = re.search(r'^volume-(min|max|set)$', k)
-						if m:
-							vol = float(v)
-							if m.group(1) == 'max':
-								if item.volume > vol: item.volume = vol
-							elif m.group(1) == 'min':
-								if item.volume < vol: item.volume = vol
-							elif m.group(1) == 'set': item.volume = vol
-						else:
-							log.debug('Unrecognized stream parameter (section: %r): %r (value: %r)', sec, k, v)
+	def apply_stream_params(self, item):
+		for sec, checks in self.conf.stream_params.viewitems():
+			match, params = True, OrderedDict()
+			for t, k, v in checks:
+				if t == 'match':
+					if match and not v.search(item.props.get(k, '')): match = False
+				elif t == 'set': params[k] = v
+				else: raise ValueError((t, k, v))
+			if match:
+				log.debug( 'Matched stream %r (name: %r)'
+					' to config section: %s', item.dbus_path, item.name, sec )
+				for k, v in params.viewitems():
+					m = re.search(r'^volume-(min|max|set)$', k)
+					if m:
+						vol = float(v)
+						if m.group(1) == 'max':
+							if item.volume > vol: item.volume = vol
+						elif m.group(1) == 'min':
+							if item.volume < vol: item.volume = vol
+						elif m.group(1) == 'set': item.volume = vol
+					else:
+						log.debug('Unrecognized stream parameter (section: %r): %r (value: %r)', sec, k, v)
 
 	@property
 	def item_list(self):
@@ -656,6 +661,12 @@ class PAMixerMenu(object):
 		if not self.items: return
 		func = self.focus_policies[self.conf.focus_default]
 		return func(self.items.values())
+
+	def item_newer(self, ts):
+		items_ts = sorted(self.item_ts.items(), key=op.itemgetter(1), reverse=True)
+		if not items_ts: return
+		item, item_ts = items_ts[0]
+		if item_ts > ts: return item
 
 	def item_after(self, item=None):
 		if item:
@@ -771,6 +782,22 @@ class PAMixerUI(object):
 		return getattr(self.c, 'key_{}'.format(k).upper())
 
 
+	_item_hl = _item_hl_ts = None
+
+	@property
+	def item_hl(self):
+		if self._item_hl and self.conf.focus_new_items:
+			ts = self._item_hl_ts
+			if ts: ts += self.conf.focus_new_items_delay or 0
+			item = self.menu.item_newer(ts)
+			if item: self._item_hl = item
+		return self._item_hl
+
+	@item_hl.setter
+	def item_hl(self, item):
+		self._item_hl, self._item_hl_ts = item, time.time()
+
+
 	def _run(self, stdscr):
 		c, self.c_stdscr = self.c, stdscr
 		key_match = lambda key,*choices: key in map(self.c_key, choices)
@@ -778,13 +805,14 @@ class PAMixerUI(object):
 		c.curs_set(0)
 		c.use_default_colors()
 
-		win, item_hl = self.c_win_init(), None
+		win = self.c_win_init()
 		self.conf.adjust_step /= 100.0
 
 		while True:
 			try:
-				items = self.menu.item_list # XXX: full refresh on every keypress is a bit excessive
-				if item_hl not in items: item_hl = self.menu.item_default()
+				# XXX: full refresh on every keypress is a bit excessive
+				items, item_hl = self.menu.item_list, self.item_hl
+				if item_hl not in items: self.item_hl = item_hl = self.menu.item_default()
 				self.c_win_draw(win, items, item_hl)
 			except PAMixerDBusError as err:
 				if err.args[0] == 'org.freedesktop.DBus.Error.UnknownMethod': continue
@@ -798,8 +826,8 @@ class PAMixerUI(object):
 			log.debug('Keypress event: %s (%r)', key, key_name)
 
 			if item_hl:
-				if key_match(key, 'up', 'k', 'p'): item_hl = item_hl.get_prev()
-				elif key_match(key, 'down', 'j', 'n'): item_hl = item_hl.get_next()
+				if key_match(key, 'up', 'k', 'p'): self.item_hl = item_hl.get_prev()
+				elif key_match(key, 'down', 'j', 'n'): self.item_hl = item_hl.get_next()
 				elif key_match(key, 'left', 'h', 'b'):
 					item_hl.volume_change(-self.conf.adjust_step)
 				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
