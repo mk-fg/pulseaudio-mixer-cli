@@ -94,6 +94,8 @@ For example:
 	adjust-step: 2
 	max-level: 131072
 	use-media-name: true
+	focus-default: last
+	focus-new-items: false
 
 Such config is totally optional, and might be useful in case default options
 aren't suitable for a specific setup and creating a shell alias or wrapper is
