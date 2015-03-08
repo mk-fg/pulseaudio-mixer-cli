@@ -41,29 +41,9 @@ the original version, and might have some extra features and/or bugs.
 Usage
 --------------------
 
-	% ./pulseaudio-mixer-cli.py -h
-	usage: pulseaudio-mixer-cli.py [-h] [-a step] [-l level] [-v] [--debug]
-
-	Pulseaudio sound level control tool.
-
-	optional arguments:
-	  -h, --help            show this help message and exit
-	  -a step, --adjust-step step
-	                        Adjustment for a single keypress in interactive mode
-	                        (0-100%, default: 5%).
-	  -l level, --max-level level
-	                        Value to treat as max (default: 65536).
-	  -n, --use-media-name  Display streams by "media.name" property, if possible.
-	                        Default is to prefer application name and process
-	                        properties.
-	  -e enc, --encoding enc
-	                        Encoding to enforce for the output. Any non-decodeable
-	                        bytes will be stripped. Mostly useful with --use-
-	                        media-name. Default: utf-8.
-	  -v, --verbose         Dont close stderr to see any sort of errors (which
-	                        mess up curses interface, thus silenced that way by
-	                        default).
-	  --debug               Verbose operation mode.
+Run the script (either "pulseaudio-mixer-cli.py" or "pa-mixer-mk2.py") with "-h"
+or "--help" option to see various other options, but there aren't that many -
+most stuff is configurable via config file (described below).
 
 That's basically how it looks... in an overly narrow terminal (to fit on a github
 page), and without "inverted row" selection visible:
