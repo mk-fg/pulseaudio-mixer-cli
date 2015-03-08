@@ -63,10 +63,9 @@ pick row and adjust bars left and right, "m" or "space" to toggle mute, "q" to
 quit and "1"-"0" number row keys to set specific level (1=0%, 0=100%, only in
 pa-mixer-mk2).
 
-Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg" (see
-[RawConfigParser docs](http://docs.python.org/2/library/configparser.html) for
-more details on format), which may contain definitions for any options, allowed
-on the command line in the "[default]" section.
+Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg".
+See [RawConfigParser docs](http://docs.python.org/2/library/configparser.html)
+for more details on format of that file.
 
 For example:
 
@@ -78,10 +77,9 @@ For example:
 	focus-new-items: false
 
 Such config is totally optional, and might be useful in case default options
-aren't suitable for a specific setup and creating a shell alias or wrapper is
-too much trouble.
-For some extra config-only options, see "pa-mixer-mk2.example.cfg".
-Commandline values override the ones defined in the config file.
+aren't suitable for a specific setup.
+See "pa-mixer-mk2.example.cfg" for the full list of these.
+Commandline values (where available) override the ones defined in the config file.
 
 There is a shiny rewritten "pa-mixer-mk2.py" script version, which is probably
 way less tested, but have some extra features, which I can't be bothered to
