@@ -610,21 +610,25 @@ class PAMixerMenu(object):
 	def update(self):
 		self._update_lock, self._update_signal = True, False
 
-		obj_paths_current, obj_paths_new, obj_paths_gone = set(), set(), set(self.items)
+		obj_paths_new, obj_paths_gone = set(), set(self.items)
 		for obj_type, prop in [('sink', 'Sinks'), ('stream', 'PlaybackStreams')]:
 			for obj_path in self.call('Get', [dbus_abbrev('pulse'), prop], iface='props'):
-				obj_paths_current.add(obj_path)
 				if obj_path not in self.items:
 					obj_paths_new.add(obj_path)
 					self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
 				else: obj_paths_gone.remove(obj_path)
 
-		for obj_path in obj_paths_gone: del self.items[obj_path]
 		if obj_paths_new:
-			items, ts = map(self.items.get, obj_paths_new), time.time()
-			for item in items:
-				self.apply_stream_params(item)
-				self.item_ts[item] = ts
+			ts = time.time()
+			objs = ((obj_path, self.items.get(obj_path)) for obj_path in obj_paths_new)
+			for obj_path, item in objs:
+				actions = self.apply_stream_params(item)
+				if actions.get('hide') is True:
+					obj_paths_gone.add(obj_path)
+				else:
+					self.item_ts[item] = ts
+
+		for obj_path in obj_paths_gone: del self.items[obj_path]
 
 		# Sort sinks to be always on top
 		sinks, streams, ordered = list(), list(), True
@@ -649,6 +653,7 @@ class PAMixerMenu(object):
 			if item: item.update_name(props_update=props)
 
 	def apply_stream_params(self, item):
+		actions = {}
 		for sec, checks in (self.conf.stream_params or dict()).viewitems():
 			match, params = True, OrderedDict()
 			for t, k, v in checks:
@@ -668,8 +673,11 @@ class PAMixerMenu(object):
 						elif m.group(1) == 'min':
 							if item.volume < vol: item.volume = vol
 						elif m.group(1) == 'set': item.volume = vol
+					elif k == 'hide' and v == 'True':
+						actions['hide'] = True
 					else:
 						log.debug('Unrecognized stream parameter (section: %r): %r (value: %r)', sec, k, v)
+		return actions
 
 	@property
 	def item_list(self):
