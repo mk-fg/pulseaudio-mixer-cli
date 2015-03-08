@@ -35,6 +35,7 @@ the original version, and might have some extra features and/or bugs.
 
 * Python 2.7
 * dbus-python (standard python dbus bindings)
+* PyGObject (aka PyGI, likely installed if dbus-python is)
 * PulseAudio 1.0+
 
 
