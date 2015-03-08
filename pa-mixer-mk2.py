@@ -20,7 +20,7 @@ class Conf(object):
 	placeholder_media_names = 'audio stream', 'AudioStream', 'Output'
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
-	stream_params = OrderedDict()
+	stream_params = None
 	broken_chars_replace = u'_'
 	focus_default = 'first' # either "first" or "last"
 	focus_new_items = True
@@ -648,7 +648,7 @@ class PAMixerMenu(object):
 			if item: item.update_name(props_update=props)
 
 	def apply_stream_params(self, item):
-		for sec, checks in self.conf.stream_params.viewitems():
+		for sec, checks in (self.conf.stream_params or dict()).viewitems():
 			match, params = True, OrderedDict()
 			for t, k, v in checks:
 				if t == 'match':
