@@ -376,10 +376,10 @@ class PAMixerDBusBridge(object):
 	def _rpc_call(self, buff, stream=None, ev=None):
 		assert stream is self.stdin, [stream, self.stdin]
 
-		if ev is None: ev = self._gobj.IO_IN
-		if ev & (self._gobj.IO_ERR | self._gobj.IO_HUP):
+		if ev is None: ev = self._glib.IO_IN
+		if ev & (self._glib.IO_ERR | self._glib.IO_HUP):
 			return self.loop.quit() # parent is gone, we're done too
-		elif ev & self._gobj.IO_IN:
+		elif ev & self._glib.IO_IN:
 			while True:
 				try: chunk = self.stdin.read(2**20)
 				except IOError as err:
@@ -436,7 +436,7 @@ class PAMixerDBusBridge(object):
 
 	def child_run(self):
 		from dbus.mainloop.glib import DBusGMainLoop
-		from gi.repository import GLib, GObject
+		from gi.repository import GLib
 		import dbus
 
 		def excepthook(t, v, tb, hook=sys.excepthook):
@@ -444,7 +444,7 @@ class PAMixerDBusBridge(object):
 			return hook(t, v, tb)
 		sys.excepthook = excepthook
 
-		self._dbus, self._gobj = dbus, GObject
+		self._dbus, self._glib = dbus, GLib
 
 		# Disable stdin/stdout buffering
 		self.stdout = os.fdopen(sys.stdout.fileno(), 'wb', 0)
@@ -462,8 +462,9 @@ class PAMixerDBusBridge(object):
 		rpc_buffer = deque()
 		flags = fcntl.fcntl(self.stdin, fcntl.F_GETFL)
 		fcntl.fcntl(self.stdin, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-		self._gobj.io_add_watch( self.stdin,
-			self._gobj.IO_IN | self._gobj.IO_ERR | self._gobj.IO_HUP,
+		self._glib.io_add_watch( self.stdin,
+			self._glib.PRIORITY_DEFAULT,
+			self._glib.IO_IN | self._glib.IO_ERR | self._glib.IO_HUP,
 			ft.partial(self._rpc_call, rpc_buffer) )
 
 		signals = ['NewSink', 'SinkRemoved', 'NewPlaybackStream', 'PlaybackStreamRemoved']
