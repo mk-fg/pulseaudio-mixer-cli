@@ -332,7 +332,7 @@ class PAMixerDBusBridge(object):
 					raise
 				subprocess.Popen(
 					['pulseaudio', '--start', '--log-target=syslog'],
-					stdout=open('/dev/null', 'wb'), stderr=subprocess.STDOUT ).wait()
+					stdout=open(os.devnull, 'wb'), stderr=subprocess.STDOUT ).wait()
 				log.debug('Started new pa-server instance')
 				# from time import sleep
 				# sleep(1) # XXX: still needed?
