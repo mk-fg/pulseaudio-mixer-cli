@@ -20,7 +20,7 @@ class Conf(object):
 	placeholder_media_names = 'audio stream', 'AudioStream', 'Output'
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
-	stream_params = None
+	stream_params = OrderedDict()
 	broken_chars_replace = u'_'
 	focus_default = 'first' # either "first" or "last"
 	focus_new_items = True
@@ -332,7 +332,7 @@ class PAMixerDBusBridge(object):
 					raise
 				subprocess.Popen(
 					['pulseaudio', '--start', '--log-target=syslog'],
-					stdout=open('/dev/null', 'wb'), stderr=STDOUT ).wait()
+					stdout=open('/dev/null', 'wb'), stderr=subprocess.STDOUT ).wait()
 				log.debug('Started new pa-server instance')
 				# from time import sleep
 				# sleep(1) # XXX: still needed?
