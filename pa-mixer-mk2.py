@@ -611,39 +611,40 @@ class PAMixerMenu(object):
 	focus_policies = dict(first=op.itemgetter(0), last=op.itemgetter(-1))
 
 	def __init__(self, dbus_bridge, conf=None, fatal=False):
-		self.call, self.fatal = dbus_bridge.call, fatal
-		self.conf, self.items = conf or Conf(), OrderedDict()
-		self.item_ts = weakref.WeakKeyDictionary()
+		self.call, self.fatal, self.conf = dbus_bridge.call, fatal, conf or Conf()
+		self.items, self.item_objs, self.item_ts = list(), OrderedDict(), weakref.WeakKeyDictionary()
 		self._update_lock = self._update_signal = False
 
 	def update(self):
 		self._update_lock, self._update_signal = True, False
 
-		obj_paths_new, obj_paths_gone = set(), set(self.items)
+		obj_paths_new, obj_paths_gone = set(), set(self.item_objs)
 		for obj_type, prop in [('sink', 'Sinks'), ('stream', 'PlaybackStreams')]:
 			for obj_path in self.call('Get', [dbus_abbrev('pulse'), prop], iface='props'):
-				if obj_path not in self.items:
+				if obj_path not in self.item_objs:
 					obj_paths_new.add(obj_path)
-					self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
+					self.item_objs[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
 				else: obj_paths_gone.remove(obj_path)
 
-		for obj_path in obj_paths_gone: del self.items[obj_path]
+		for obj_path in obj_paths_gone: del self.item_objs[obj_path]
 		if obj_paths_new:
-			items, ts = map(self.items.get, obj_paths_new), time.time()
+			items, ts = map(self.item_objs.get, obj_paths_new), time.time()
 			for item in items:
 				self.apply_stream_params(item)
 				self.item_ts[item] = ts
 
 		# Sort sinks to be always on top
 		sinks, streams, ordered = list(), list(), True
-		for obj_path, item in self.items.viewitems():
+		for obj_path, item in self.item_objs.viewitems():
 			if item.t == 'sink':
 				if streams: ordered = False
 				sinks.append((obj_path, item))
 			else: streams.append((obj_path, item))
 		if not ordered:
-			self.items.clear()
-			for obj_path, item in it.chain(sinks, streams): self.items[obj_path] = item
+			self.item_objs.clear()
+			for obj_path, item in it.chain(sinks, streams): self.item_objs[obj_path] = item
+
+		self.items = list(item for item in self.item_objs.values() if not item.hidden)
 
 		while self._update_signal: self.update() # change was signaled during update
 		self._update_lock = False
@@ -653,7 +654,7 @@ class PAMixerMenu(object):
 		log.debug('update_signal << %s %s', name, obj)
 		if self._update_lock: self._update_signal = True
 		elif name == 'PropertyListUpdated':
-			item = self.items.get(obj)
+			item = self.item_objs.get(obj)
 			if item: item.update_name(props_update=props)
 
 	def apply_stream_params(self, item):
@@ -683,31 +684,30 @@ class PAMixerMenu(object):
 	@property
 	def item_list(self):
 		self.update()
-		return list(item for item in self.items.values() if not item.hidden)
+		return self.items
 
 	def item_default(self):
 		if not self.items: return
 		func = self.focus_policies[self.conf.focus_default]
-		return func(self.items.values())
+		return func(self.items)
 
 	def item_newer(self, ts):
 		items_ts = sorted(self.item_ts.items(), key=op.itemgetter(1), reverse=True)
-		if not items_ts: return
-		item, item_ts = items_ts[0]
-		if item_ts > ts: return item
+		for item, item_ts in items_ts:
+			if item in self.items and item_ts > ts: return item
 
 	def item_after(self, item=None):
 		if item:
-			for k, item2 in self.items.viewitems():
+			for item2 in self.items:
 				if item is StopIteration: return item2
-				if k == item.dbus_path: item = StopIteration
+				if item2.dbus_path == item.dbus_path: item = StopIteration
 		return self.item_default()
 
 	def item_before(self, item=None):
 		if item:
 			item_prev = None
-			for k, item2 in self.items.viewitems():
-				if k == item.dbus_path:
+			for item2 in self.items:
+				if item2.dbus_path == item.dbus_path:
 					if not item_prev: break
 					return item_prev
 				item_prev = item2
