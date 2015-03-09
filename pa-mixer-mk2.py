@@ -26,6 +26,14 @@ class Conf(object):
 	focus_new_items = True
 	focus_new_items_delay = 5.0 # min seconds since last focus change to trigger this
 
+	@staticmethod
+	def parse_bool(val, _states={
+			'1': True, 'yes': True, 'true': True, 'on': True,
+			'0': False, 'no': False, 'false': False, 'off': False }):
+		try: return _states[val.lower()]
+		except KeyError: raise ValueError(val)
+
+
 def update_conf_from_file(conf, path_or_file):
 	if isinstance(path_or_file, types.StringTypes): path_or_file = open(path_or_file)
 	with path_or_file as src:
@@ -489,6 +497,7 @@ class PAMixerMenuItem(object):
 	def __init__(self, menu, obj_type, obj_path):
 		self.menu, self.t, self.conf, self.call = menu, obj_type, menu.conf, menu.call
 		self.dbus_path, self.dbus_type = obj_path, dbus_join('pulse', [self.dbus_types[self.t]])
+		self.hidden = False
 		self.update_name()
 
 		if self.conf.dump_stream_params:
@@ -618,17 +627,12 @@ class PAMixerMenu(object):
 					self.items[obj_path] = PAMixerMenuItem(self, obj_type, obj_path)
 				else: obj_paths_gone.remove(obj_path)
 
-		if obj_paths_new:
-			ts = time.time()
-			objs = ((obj_path, self.items.get(obj_path)) for obj_path in obj_paths_new)
-			for obj_path, item in objs:
-				actions = self.apply_stream_params(item)
-				if actions.get('hide') is True:
-					obj_paths_gone.add(obj_path)
-				else:
-					self.item_ts[item] = ts
-
 		for obj_path in obj_paths_gone: del self.items[obj_path]
+		if obj_paths_new:
+			items, ts = map(self.items.get, obj_paths_new), time.time()
+			for item in items:
+				self.apply_stream_params(item)
+				self.item_ts[item] = ts
 
 		# Sort sinks to be always on top
 		sinks, streams, ordered = list(), list(), True
@@ -653,7 +657,6 @@ class PAMixerMenu(object):
 			if item: item.update_name(props_update=props)
 
 	def apply_stream_params(self, item):
-		actions = {}
 		for sec, checks in (self.conf.stream_params or dict()).viewitems():
 			match, params = True, OrderedDict()
 			for t, k, v in checks:
@@ -673,16 +676,14 @@ class PAMixerMenu(object):
 						elif m.group(1) == 'min':
 							if item.volume < vol: item.volume = vol
 						elif m.group(1) == 'set': item.volume = vol
-					elif k == 'hide' and v == 'True':
-						actions['hide'] = True
+					elif k == 'hidden': item.hidden = self.conf.parse_bool(v)
 					else:
 						log.debug('Unrecognized stream parameter (section: %r): %r (value: %r)', sec, k, v)
-		return actions
 
 	@property
 	def item_list(self):
 		self.update()
-		return self.items.values()
+		return list(item for item in self.items.values() if not item.hidden)
 
 	def item_default(self):
 		if not self.items: return
