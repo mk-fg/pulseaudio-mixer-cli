@@ -6,7 +6,7 @@ import itertools as it, operator as op, functools as ft
 from collections import deque, OrderedDict
 import ConfigParser as configparser
 import os, sys, io, logging, re, time, types, string, unicodedata, random
-import json, subprocess, signal, fcntl, select, errno, base64, hashlib, weakref
+import json, subprocess, signal, fcntl, select, errno, base64, hashlib
 
 
 class Conf(object):
@@ -497,7 +497,7 @@ class PAMixerMenuItem(object):
 	def __init__(self, menu, obj_type, obj_path):
 		self.menu, self.t, self.conf, self.call = menu, obj_type, menu.conf, menu.call
 		self.dbus_path, self.dbus_type = obj_path, dbus_join('pulse', [self.dbus_types[self.t]])
-		self.hidden = False
+		self.hidden, self.created_ts = False, time.time()
 		self.update_name()
 
 		if self.conf.dump_stream_params:
@@ -612,7 +612,7 @@ class PAMixerMenu(object):
 
 	def __init__(self, dbus_bridge, conf=None, fatal=False):
 		self.call, self.fatal, self.conf = dbus_bridge.call, fatal, conf or Conf()
-		self.items, self.item_objs, self.item_ts = list(), OrderedDict(), weakref.WeakKeyDictionary()
+		self.items, self.item_objs = list(), OrderedDict()
 		self._update_lock = self._update_signal = False
 
 	def update(self):
@@ -627,11 +627,7 @@ class PAMixerMenu(object):
 				else: obj_paths_gone.remove(obj_path)
 
 		for obj_path in obj_paths_gone: del self.item_objs[obj_path]
-		if obj_paths_new:
-			items, ts = map(self.item_objs.get, obj_paths_new), time.time()
-			for item in items:
-				self.apply_stream_params(item)
-				self.item_ts[item] = ts
+		for obj_path in obj_paths_new: self.apply_stream_params(self.item_objs[obj_path])
 
 		# Sort sinks to be always on top
 		sinks, streams, ordered = list(), list(), True
@@ -692,9 +688,8 @@ class PAMixerMenu(object):
 		return func(self.items)
 
 	def item_newer(self, ts):
-		items_ts = sorted(self.item_ts.items(), key=op.itemgetter(1), reverse=True)
-		for item, item_ts in items_ts:
-			if item in self.items and item_ts > ts: return item
+		items = sorted(self.items, key=op.attrgetter('created_ts'), reverse=True)
+		if items and items[0].created_ts > ts: return items[0]
 
 	def item_after(self, item=None):
 		if item:
