@@ -15,9 +15,14 @@ class Conf(object):
 	adjust_step = 5
 	max_level = 2 ** 16 # absolute value (as used in PA), displayed as "100%"
 	min_level = 0 # absolute value (as used in PA), displayed as "0%"
+
 	use_device_name = False
 	use_media_name = False
 	placeholder_media_names = 'audio stream', 'AudioStream', 'Output'
+	name_len_max = 100
+	name_cut_from = 'left' # "left" or "right"
+	name_show_level = True
+
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
 	stream_params = None
@@ -716,6 +721,7 @@ class PAMixerUI(object):
 	bar_len_min = 10
 	bar_caps_func = staticmethod(lambda bar='': ' [ ' + bar + ' ]')
 	border = 1
+	name_cut_funcs = dict(left=lambda n,c: n[max(0, len(n) - c):], right=lambda n,c: n[:c])
 
 	def __init__(self, menu):
 		self.menu, self.conf = menu, menu.conf
@@ -769,8 +775,11 @@ class PAMixerUI(object):
 			items = map(op.itemgetter(1), sorted(items_fit.viewitems(), key=op.itemgetter(0)))
 
 		# Fit stuff horizontally
+		mute_button_len, level_len = 2, 5
 		item_len_max = max(len(item.name) for item in items)
-		mute_button_len = 2
+		if self.conf.name_show_level: item_len_max += level_len
+		if self.conf.name_len_max:
+			item_len_max = min(item_len_max, self.conf.name_len_max)
 		bar_len = win_len - item_len_max - mute_button_len - len(self.bar_caps_func())
 		if bar_len < self.bar_len_min:
 			item_len_max = max(self.item_len_min, item_len_max + bar_len - self.bar_len_min)
@@ -783,9 +792,17 @@ class PAMixerUI(object):
 			row += pad_y
 
 			attrs = self.c.A_REVERSE if item is item_hl else self.c.A_NORMAL
-			name_uni = item.name[:item_len_max]
+			name_len = item_len_max - bool(self.conf.name_show_level) * level_len
+			name_uni = self.name_cut_funcs[self.conf.name_cut_from](item.name, name_len)
 			name_bytes = force_bytes(name_uni)
 			name_len_delta = len(name_bytes) - len(name_uni) # ncurses+unicode issue
+
+			if self.conf.name_show_level:
+				level = max(0, min(100, int(round(item.volume * 100))))
+				if level == 0: level = '--'
+				elif level == 100: level = '++'
+				else: level = '{:>2d}'.format(level)
+				name_bytes = '[{}] {}'.format(level, name_bytes)
 
 			win.addstr(row, 0, ' ' * pad_x)
 			win.addstr(row, pad_x, name_bytes, attrs)
