@@ -101,8 +101,18 @@ def uid_str( seed=None, length=4,
 	seed_bytes = length * 6 / 8
 	assert seed_bytes * 8 / 6 == length, [length, seed_bytes]
 	if seed is None: seed = '\0\0\0{:08x}'.format(next(_seed_gen))
-	seed = hashlib.sha256(seed).digest()[:seed_bytes]
+	seed = hashlib.sha256(bytes(seed)).digest()[:seed_bytes]
 	return base64.urlsafe_b64encode(seed)
+
+def log_lines(log_func, lines, log_func_last=False):
+	if isinstance(lines, types.StringTypes):
+		lines = list(line.rstrip() for line in lines.rstrip().split('\n'))
+	uid = uid_str()
+	for n, line in enumerate(lines, 1):
+		if isinstance(line, types.StringTypes): line = '[%s] %s', uid, line
+		else: line = ('[{}] {}'.format(uid, line[0]),) + line[1:]
+		if log_func_last and n == len(lines): log_func_last(*line)
+		else: log_func(*line)
 
 def force_bytes(bytes_or_unicode, encoding='utf-8', errors='backslashreplace'):
 	if isinstance(bytes_or_unicode, bytes): return bytes_or_unicode
@@ -159,13 +169,13 @@ class PAMixerDBusBridge(object):
 	log_pipes = False # very noisy, but useful to see all chatter between parent/child
 	handle_proplist_updates = False
 	poll_timeout = 1.0 # for recovery from race conditions, should be small
-	proxy_call_timeout = 20.0 # to crash instead of hangs
-	child_calls_cleanup = 0.05, 20.0 # chance, timeout
+	proxy_call_timeout = 5.0 # to crash instead of hangs
+	child_calls_cleanup = 0.03, 20.0 # chance, timeout
 
 	def __init__(self, child_cmd=None, fatal=False, log_pipes=False):
 		self.child_cmd, self.core_pid, self.fatal = child_cmd, os.getppid(), fatal
 		self.child_sigs, self.child_calls, self._child_gc = deque(), dict(), set()
-		self.line_buff, self.log_pipes = deque(), log_pipes
+		self.line_buff, self.line_debug, self.log_pipes = deque(), deque(maxlen=30), log_pipes
 
 
 	def _child_readline_poll(self):
@@ -228,8 +238,11 @@ class PAMixerDBusBridge(object):
 			if init_line:
 				assert line.strip() == 'ready', repr(line)
 				break
-			if self.log_pipes: log.debug('rpc-parent(raw) << %r', line)
-			line = json.loads(line)
+			self.line_debug.append(('rpc-parent(raw) << %r', line))
+			if self.log_pipes: log.debug(*self.line_debug[-1])
+			try: line = json.loads(line)
+			except ValueError as err: # json module error doesn't provide the actual data
+				raise ValueError('Failed to parse line ({}): {!r}', err, line)
 			if line['t'] == 'signal':
 				self.child_sigs.append(line)
 				if one_signal: break
@@ -248,9 +261,14 @@ class PAMixerDBusBridge(object):
 		res = Exception
 		for n in xrange(2): # even 2 is kinda generous - likely to be some bug
 			try:
-				if self.log_pipes: log.debug('rpc-parent(raw) >> %r', call)
+				self.line_debug.append(('rpc-parent(raw) >> %r', call))
+				if self.log_pipes: log.debug(*self.line_debug[-1])
 				self._child.stdin.write('{}\n'.format(call))
 				res = self._child_readline(wait_for_cid=cid)
+				if res['t'] == 'call_error'\
+						and res['err_type'] == u'org.freedesktop.DBus.Error.Disconnected':
+					# Reconnection works by restarting child, hence handled here
+					raise PAMixerDBusError(res['err_type'], res['err_msg'])
 			except Exception as err:
 				log.exception('Failure communicating with child pid, restarting it: %s', err)
 				if self.fatal: break
@@ -258,7 +276,8 @@ class PAMixerDBusBridge(object):
 				self.child_check_restart()
 			else: break
 		if res is Exception:
-			raise PAMixerDBusBridgeError('Failed to communicate with child pid')
+			raise PAMixerDBusBridgeError(
+				'Failed to communicate with child pid, even after restart' )
 		if res['t'] == 'call_error': raise PAMixerDBusError(res['err_type'], res['err_msg'])
 		assert res['t'] == 'call_result', res
 		return res['val']
@@ -268,16 +287,18 @@ class PAMixerDBusBridge(object):
 		self.signal_func = func
 		signal.signal(self.signal, self.signal_handler)
 		# Async signals also require async detection of when child died
+		#  Popen can cause SIGCHLD, hence some workarounds
 		signal.signal(signal.SIGCHLD, self.child_check_restart)
 
 	def signal_handler(self, sig=None, frm=None):
+		log.debug('Signal handler triggered by: %s', sig)
 		if not self.child_sigs: self._child_readline(one_signal=True)
 		while self.child_sigs:
 			line = self.child_sigs.popleft()
 			self.signal_func(**line)
 
 
-	_child_proc = None
+	_child_proc = _child_check = None
 	@property
 	def _child(self): return self._child_proc
 	@_child.setter
@@ -296,12 +317,15 @@ class PAMixerDBusBridge(object):
 			self.wakeup_fd = os.fdopen(r, 'rb', 0)
 			self.poller.register(self.wakeup_fd, select.EPOLLIN)
 		if self._child and gc_old_one:
-			self._child.wait()
+			err = self._child.wait()
+			self.line_buff.clear()
+			self.line_debug.append(('--- child exit: %s', err))
 			self._child = None
 		if not self.child_cmd or self._child: return
 		self._child = subprocess.Popen( self.child_cmd,
-			stdout=subprocess.PIPE, stdin=subprocess.PIPE, close_fds=True )
+			stdin=subprocess.PIPE, stdout=subprocess.PIPE, close_fds=True )
 		self._child_readline(init_line=True) # wait until it's ready
+		log.debug('Child process initialized (pid: %s)', self._child.pid)
 
 	def child_kill(self):
 		if self._child:
@@ -310,17 +334,21 @@ class PAMixerDBusBridge(object):
 			try: child.kill() # no need to be nice here
 			except OSError: pass
 
-	def child_check_restart(self, sig=None, frm=None): # XXX: call implicitly on and comm errors
-		if self._child_gc: # these are cleaned-up just to avoid keeping zombies around
-			for pid in list(self._child_gc):
-				try: res = os.waitpid(pid, os.WNOHANG)
-				except OSError: res = pid, None
-				if res and res[0]: self._child_gc.remove(pid)
-		self.child_start()
-		if not self._child: return # can't be started
-		if self._child.poll() is not None:
-			log.debug('glib/dbus child pid (%s) died. restarting it', self._child.pid)
-			self.child_start(gc_old_one=True)
+	def child_check_restart(self, sig=None, frm=None):
+		if self._child_check: return # likely due to SIGCHLD from Popen
+		self._child_check = True
+		try:
+			if self._child_gc: # these are cleaned-up just to avoid keeping zombies around
+				for pid in list(self._child_gc):
+					try: res = os.waitpid(pid, os.WNOHANG)
+					except OSError: res = pid, None
+					if res and res[0]: self._child_gc.remove(pid)
+			self.child_start()
+			if not self._child: return # can't be started
+			if self._child.poll() is not None:
+				log.debug('glib/dbus child pid (%s) died. restarting it', self._child.pid)
+				self.child_start(gc_old_one=True)
+		finally: self._child_check = False
 
 
 	def _get_bus_address(self):
@@ -377,7 +405,8 @@ class PAMixerDBusBridge(object):
 	@_glib_err_wrap
 	def _core_notify(self, _signal=False, **kws):
 		chunk = dict(**kws)
-		if self.log_pipes: log.debug('rpc-child(py) >> %s', chunk)
+		self.line_debug.append(('rpc-child(py) >> %s', chunk))
+		if self.log_pipes: log.debug(*self.line_debug[-1])
 		chunk = json.dumps(chunk)
 		assert '\n' not in chunk, chunk
 		try:
@@ -416,7 +445,8 @@ class PAMixerDBusBridge(object):
 					assert '\n' not in chunk, chunk
 					req.append(chunk)
 				req = json.loads(''.join(req))
-				if self.log_pipes: log.debug('rpc-child(py) << %s', req)
+				self.line_debug.append(('rpc-child(py) << %s', req))
+				if self.log_pipes: log.debug(*self.line_debug[-1])
 
 				# Run dbus call and return the result, synchronously
 				assert req['t'] == 'call', req
@@ -464,7 +494,7 @@ class PAMixerDBusBridge(object):
 		self.stdin = os.fdopen(sys.stdin.fileno(), 'rb', 0)
 
 		self.stdout.write('ready\n') # wait for main process to get ready, signal readiness
-		log.debug('DBus signal handler thread started')
+		log.debug('DBus signal handler subprocess started')
 
 		DBusGMainLoop(set_as_default=True)
 		self.loop, self.loop_exc = GLib.MainLoop(), None
@@ -489,6 +519,7 @@ class PAMixerDBusBridge(object):
 				sig_name_last, path_keyword='src_obj_path' )
 			self.core.ListenForSignal(
 				'org.PulseAudio.Core1.{}'.format(sig_name), self._dbus.Array(signature='o') )
+		self._glib.unix_signal_add(self._glib.PRIORITY_HIGH, signal.SIGTERM, self.loop.quit)
 		self.loop.run()
 		# XXX: wrapper loop here, in case of *clean* loop.quit() yet dbus not being dead
 		if self.loop_exc: raise self.loop_exc[0], self.loop_exc[1], self.loop_exc[2]
@@ -939,19 +970,22 @@ def main(args=None):
 	del opts
 
 	global log, print
-	logging.basicConfig(level=logging.DEBUG if conf.debug else logging.WARNING)
+	log_pid = os.getpid()
+	logging.basicConfig(
+		level=logging.DEBUG if conf.debug else logging.WARNING,
+		format='%(asctime)s :: {} %(levelname)s :: %(message)s'.format(uid_str(log_pid)),
+		datefmt='%Y-%m-%d %H:%M:%S' )
 	log = logging.getLogger()
 	print = ft.partial(print, file=sys.stderr) # stdout is used by curses or as a pipe (child)
+	log.debug('Starting script (child: %s, pid: %s)', conf.child_pid_do_not_use, log_pid)
 
 	if conf.child_pid_do_not_use:
 		dbus_bridge = PAMixerDBusBridge(log_pipes=conf.debug_pipes)
 		if conf.use_media_name: dbus_bridge.handle_proplist_updates = True
 		try: return dbus_bridge.child_run()
-		except PAMixerDBusBridgeError as err:
-			log.info('PAMixerDBusBridgeError event in a child pid: %s', err)
-			argv = self_exec_cmd(sys.argv)
-			os.closerange(3, max(map(int, os.listdir('/proc/self/fd'))) + 1)
-			os.execvp(*argv)
+		finally:
+			if log.isEnabledFor(logging.INFO):
+				log_lines(log.info, ['Last pipe traffic from child pid:'] + list(dbus_bridge.line_debug))
 
 	dbus_bridge = ['--child-pid-do-not-use']
 	if conf.debug:
@@ -969,8 +1003,12 @@ def main(args=None):
 		# Any output will mess-up curses ui, so try to close sys.stderr if possible
 		if not conf.verbose and not conf.debug\
 			and not conf.dump_stream_params: sys.stderr.close()
-		log.debug('Starting curses ui loop...')
-		curses_ui.run()
+		log.debug('Entering curses ui loop...')
+		try: curses_ui.run()
+		except:
+			if log.isEnabledFor(logging.INFO):
+				log_lines(log.info, ['Last pipe traffic from parent pid:'] + list(dbus_bridge.line_debug))
+			raise
 		log.debug('Finished')
 
 if __name__ == '__main__': sys.exit(main())
