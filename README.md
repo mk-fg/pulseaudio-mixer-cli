@@ -31,6 +31,24 @@ especially on Ubuntu, where it seem to be disabled by default
 There is now also "pa-mixer-mk2.py" script in the repo, which is a rewrite of
 the original version, and might have some extra features and/or bugs.
 
+### Warning
+
+As of pulseaudio-6.0, loading module-dbus-protocol issues following warnings:
+
+	[pulseaudio] module-dbus-protocol.c: module-dbus-protocol is
+	  currently unsupported, and can sometimes cause PulseAudio crashes.
+	[pulseaudio] module-dbus-protocol.c: The most popular use
+	  cases for module-dbus-protocol are related to changing equalizer
+	  settings and LADSPA plugin parameters at runtime.
+	[pulseaudio] module-dbus-protocol.c: If you don't use such
+	  functionality, it's possible that you don't actually need this module.
+
+I haven't experienced any crashes with newer PA versions first-hand,
+and killing/restarting PA seem to only cause a brief sound disruption, but if
+that is indeed a problem, currently there is no way to use this script without
+the module (though probably not hard to rewrite it to use PA protocol instead,
+patches welcome!).
+
 ### Requirements
 
 * Python 2.7
