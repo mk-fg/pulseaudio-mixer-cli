@@ -167,6 +167,7 @@ class PAMixerDBusBridge(object):
 	signal = signal.SIGUSR1 # used to break curses loop in the parent pid
 	poller = wakeup_fd = None
 	log_pipes = False # very noisy, but useful to see all chatter between parent/child
+	log_pipes_err_buffer = 30
 	handle_proplist_updates = False
 	poll_timeout = 1.0 # for recovery from race conditions, should be small
 	proxy_call_timeout = 5.0 # to crash instead of hangs
@@ -175,7 +176,8 @@ class PAMixerDBusBridge(object):
 	def __init__(self, child_cmd=None, fatal=False, log_pipes=False):
 		self.child_cmd, self.core_pid, self.fatal = child_cmd, os.getppid(), fatal
 		self.child_sigs, self.child_calls, self._child_gc = deque(), dict(), set()
-		self.line_buff, self.line_debug, self.log_pipes = deque(), deque(maxlen=30), log_pipes
+		self.line_buff, self.log_pipes = deque(), log_pipes
+		self.line_debug = deque(maxlen=self.log_pipes_err_buffer)
 
 
 	def _child_readline_poll(self):
@@ -271,6 +273,9 @@ class PAMixerDBusBridge(object):
 					raise PAMixerDBusError(res['err_type'], res['err_msg'])
 			except Exception as err:
 				log.exception('Failure communicating with child pid, restarting it: %s', err)
+				if log.isEnabledFor(logging.INFO):
+					log_lines( log.info,
+						['Last pipe traffic (parent pid side):'] + list(dbus_bridge.line_debug) )
 				if self.fatal: break
 				self.child_kill()
 				self.child_check_restart()
@@ -332,7 +337,10 @@ class PAMixerDBusBridge(object):
 			child, self._child = self._child, None
 			self._child_gc.add(child.pid)
 			try: child.kill() # no need to be nice here
-			except OSError: pass
+			except OSError as err:
+				log.debug('child_kill error: %s', err)
+		else:
+			log.debug('child_kill invoked with no child around')
 
 	def child_check_restart(self, sig=None, frm=None):
 		if self._child_check: return # likely due to SIGCHLD from Popen
@@ -985,7 +993,7 @@ def main(args=None):
 		try: return dbus_bridge.child_run()
 		finally:
 			if log.isEnabledFor(logging.INFO):
-				log_lines(log.info, ['Last pipe traffic from child pid:'] + list(dbus_bridge.line_debug))
+				log_lines(log.info, ['Last pipe traffic (child pid side):'] + list(dbus_bridge.line_debug))
 
 	dbus_bridge = ['--child-pid-do-not-use']
 	if conf.debug:
@@ -1007,7 +1015,7 @@ def main(args=None):
 		try: curses_ui.run()
 		except:
 			if log.isEnabledFor(logging.INFO):
-				log_lines(log.info, ['Last pipe traffic from parent pid:'] + list(dbus_bridge.line_debug))
+				log_lines(log.info, ['Last pipe traffic (parent pid side):'] + list(dbus_bridge.line_debug))
 			raise
 		log.debug('Finished')
 
