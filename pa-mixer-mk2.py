@@ -275,7 +275,7 @@ class PAMixerDBusBridge(object):
 				log.exception('Failure communicating with child pid, restarting it: %s', err)
 				if log.isEnabledFor(logging.INFO):
 					log_lines( log.info,
-						['Last pipe traffic (parent pid side):'] + list(dbus_bridge.line_debug) )
+						['Last pipe traffic (parent pid side):'] + list(self.line_debug) )
 				if self.fatal: break
 				self.child_kill()
 				self.child_check_restart()
