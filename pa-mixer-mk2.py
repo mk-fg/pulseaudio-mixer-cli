@@ -18,7 +18,7 @@ class Conf(object):
 
 	use_device_name = False
 	use_media_name = False
-	placeholder_media_names = 'audio stream', 'AudioStream', 'Output'
+	placeholder_media_names = 'audio stream', 'AudioStream', 'Output', 'ALSA Playback'
 	name_len_max = 100
 	name_cut_from = 'left' # "left" or "right"
 	name_show_level = True

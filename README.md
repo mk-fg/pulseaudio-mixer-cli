@@ -67,12 +67,12 @@ most stuff is configurable via config file (described below).
 That's basically how it looks... in an overly narrow terminal (to fit on a github
 page), and without "inverted row" selection visible:
 
-	HDMI 0 (hdmi-stereo@snd_hda_intel)                - [ ############################### ]
-	ID 440 Analog (analog-stereo@snd_hda_intel)       - [ ##########################----- ]
-	mpv - Bax - Perceptions 206 on ETN.fm Jan-22-2015 - [ #########---------------------- ]
-	VLC media player (fraggod@malediction:24321)      - [ ##############----------------- ]
-	Skype (fraggod@malediction:24202)                 - [ #################-------------- ]
-	ALSA Playback                                     M [ #######------------------------ ]
+	[++] HDMI 0 (hdmi-stereo@snd_hda_intel)                - [ ########################## ]
+	[81] ID 440 Analog (analog-stereo@snd_hda_intel)       - [ #####################----- ]
+	[35] mpv - Bax - Perceptions 206 on ETN.fm Jan-22-2015 - [ #########----------------- ]
+	[38] VLC media player (fraggod@malediction:24321)      - [ ##########---------------- ]
+	[54] Skype (fraggod@malediction:24202)                 - [ ##############------------ ]
+	[27] ALSA plug-in [PillarsOfEternity]                  - [ #######------------------- ]
 
 Sink levels always displayed on top, "M" or "-" to the left of the bar is a mute
 indicator.
