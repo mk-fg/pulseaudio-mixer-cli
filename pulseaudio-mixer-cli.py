@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python2
 from __future__ import unicode_literals, print_function
 
 import os, sys
