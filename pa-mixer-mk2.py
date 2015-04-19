@@ -565,7 +565,9 @@ class PAMixerMenuItem(object):
 	def update_name(self, props_update=None):
 		if props_update is None: self.props = self._prop_get('PropertyList')
 		else: self.props.update(props_update)
-		self.name = force_unicode(self._get_name())
+		name = self._get_name()
+		if not name: name = self._get_name_unique('null')
+		self.name = force_unicode(name)
 
 	def _get_name_unique(self, name):
 		return '{} #{}'.format(force_bytes(name), uid_str())
