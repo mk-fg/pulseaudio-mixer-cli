@@ -176,7 +176,7 @@ class PAMixerDBusBridge(object):
 	def __init__(self, child_cmd=None, fatal=False, log_pipes=False):
 		self.child_cmd, self.core_pid, self.fatal = child_cmd, os.getppid(), fatal
 		self.child_sigs, self.child_calls, self._child_gc = deque(), dict(), set()
-		self.line_buff, self.log_pipes = deque(), log_pipes
+		self.line_buff, self.log_pipes = '', log_pipes
 		self.line_debug = deque(maxlen=self.log_pipes_err_buffer)
 
 
@@ -184,9 +184,8 @@ class PAMixerDBusBridge(object):
 		'child.stdout.readline() that also reacts to signals.'
 		# One shitty ipc instead of another... good job!
 		line = None
-		if self.line_buff and '\n' in self.line_buff[0]:
-			line, self.line_buff[0] = self.line_buff[0].split('\n', 1)
 		while True:
+			if '\n' in self.line_buff: line, self.line_buff = self.line_buff.split('\n', 1)
 			if line is not None: return line
 			try: evs = self.poller.poll(self.poll_timeout) or list()
 			except IOError as err:
@@ -208,11 +207,7 @@ class PAMixerDBusBridge(object):
 					except IOError as err:
 						if err.errno != errno.EAGAIN: raise
 						continue
-					if '\n' in chunk:
-						line, chunk = chunk.split('\n', 1)
-						line = ''.join(it.chain(self.line_buff, [line]))
-						self.line_buff.clear()
-					self.line_buff.append(chunk)
+					self.line_buff += chunk
 
 	def _child_readline(self, wait_for_cid=None, one_signal=False, init_line=False):
 		ts0 = time.time()
