@@ -173,8 +173,8 @@ class PAMixerDBusBridge(object):
 	proxy_call_timeout = 5.0 # to crash instead of hangs
 	child_calls_cleanup = 0.03, 20.0 # chance, timeout
 
-	def __init__(self, child_cmd=None, fatal=False, log_pipes=False):
-		self.child_cmd, self.core_pid, self.fatal = child_cmd, os.getppid(), fatal
+	def __init__(self, child_cmd=None, core_pid=None, fatal=False, log_pipes=False):
+		self.child_cmd, self.core_pid, self.fatal = child_cmd, core_pid, fatal
 		self.child_sigs, self.child_calls, self._child_gc = deque(), dict(), set()
 		self.line_buff, self.log_pipes = '', log_pipes
 		self.line_debug = deque(maxlen=self.log_pipes_err_buffer)
@@ -318,7 +318,7 @@ class PAMixerDBusBridge(object):
 			self.poller.register(self.wakeup_fd, select.EPOLLIN)
 		if self._child and gc_old_one:
 			err = self._child.wait()
-			self.line_buff.clear()
+			self.line_buff = ''
 			self.line_debug.append(('--- child exit: %s', err))
 			self._child = None
 		if not self.child_cmd or self._child: return
@@ -635,7 +635,7 @@ class PAMixerMenuItem(object):
 		return min(1.0, volume_abs / float(self.conf.max_level))
 	@volume.setter
 	def volume(self, val):
-		log.debug('Setting volume: %s', val)
+		log.debug('Setting volume: %s %s', val, self)
 		val, chans = min(1.0, max(0, val)), len(self.volume_chans)
 		self.volume_chans = [int(val * self.conf.max_level) + self.conf.min_level] * chans
 
@@ -967,7 +967,8 @@ def main(args=None):
 	parser.add_argument('--fatal', action='store_true',
 		help='Dont try too hard to recover from errors. For debugging purposes only.')
 
-	parser.add_argument('--child-pid-do-not-use', action='store_true',
+	parser.add_argument('--parent-pid-do-not-use',
+		type=int, metavar='pid',
 		help='Used internally to spawn dbus sub-pid, should not be used directly.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -982,17 +983,18 @@ def main(args=None):
 		datefmt='%Y-%m-%d %H:%M:%S' )
 	log = logging.getLogger()
 	print = ft.partial(print, file=sys.stderr) # stdout is used by curses or as a pipe (child)
-	log.debug('Starting script (child: %s, pid: %s)', conf.child_pid_do_not_use, log_pid)
+	log.debug('Starting script (child: %s, pid: %s)', bool(conf.parent_pid_do_not_use), log_pid)
 
-	if conf.child_pid_do_not_use:
-		dbus_bridge = PAMixerDBusBridge(log_pipes=conf.debug_pipes)
+	if conf.parent_pid_do_not_use:
+		dbus_bridge = PAMixerDBusBridge(
+			core_pid=conf.parent_pid_do_not_use, log_pipes=conf.debug_pipes )
 		if conf.use_media_name: dbus_bridge.handle_proplist_updates = True
 		try: return dbus_bridge.child_run()
 		finally:
 			if log.isEnabledFor(logging.INFO):
 				log_lines(log.info, ['Last pipe traffic (child pid side):'] + list(dbus_bridge.line_debug))
 
-	dbus_bridge = ['--child-pid-do-not-use']
+	dbus_bridge = ['--parent-pid-do-not-use', bytes(os.getpid())]
 	if conf.debug:
 		dbus_bridge += ['--debug']
 		if conf.debug_pipes: dbus_bridge += ['--debug-pipes']
