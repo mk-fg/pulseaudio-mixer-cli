@@ -384,8 +384,8 @@ class PAMixerDBusBridge(object):
 		return self._dbus.connection.Connection(srv_addr)
 
 	def _dbus_val(self, args, translate=None):
-		if translate == 'volume':
-			args[-1] = list(self._dbus.UInt32(round(v)) for v in args[-1])
+		if translate == 'volume': args[-1] = list(self._dbus.UInt32(round(v)) for v in args[-1])
+		if translate == 'path': args[-1] = self._dbus.ObjectPath(args[-1])
 		return args
 
 
@@ -613,7 +613,7 @@ class PAMixerMenuItem(object):
 		return self._get_name_unique(self.t)
 
 
-	def _dbus_prop(name, dbus_name=None, translate=None):
+	def _dbus_prop(name=None, dbus_name=None, translate=None):
 		dbus_name = dbus_name or name.title()
 		def dbus_prop_get(self):
 			return self.call('Get', [self.dbus_type, dbus_name], obj=self.dbus_path, iface='props')
@@ -638,6 +638,21 @@ class PAMixerMenuItem(object):
 		log.debug('Setting volume: %s %s', val, self)
 		val, chans = min(1.0, max(0, val)), len(self.volume_chans)
 		self.volume_chans = [int(val * self.conf.max_level) + self.conf.min_level] * chans
+
+	_port_dbus_path = _dbus_prop(dbus_name='ActivePort', translate='path')
+	@property
+	def port(self):
+		assert self.t == 'sink', self.t
+		return self.call( 'Get',
+			[dbus_join('pulse', 'DevicePort'), 'Name'],
+			obj=self._port_dbus_path, iface='props' )
+	@port.setter
+	def port(self, name):
+		assert self.t == 'sink', self.t
+		self._port_dbus_path = self.call(
+			'GetPortByName', [name],
+			obj=self.dbus_path, iface=self.dbus_type )
+
 
 	def muted_toggle(self): self.muted = not self.muted
 	def volume_change(self, delta): self.volume += delta
@@ -715,6 +730,7 @@ class PAMixerMenu(object):
 							if item.volume < vol: item.volume = vol
 						elif m.group(1) == 'set': item.volume = vol
 					elif k == 'hidden': item.hidden = self.conf.parse_bool(v)
+					elif k == 'port': item.port = v
 					else:
 						log.debug('Unrecognized stream parameter (section: %r): %r (value: %r)', sec, k, v)
 
