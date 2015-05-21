@@ -156,6 +156,7 @@ def strip_noise_bytes( obj, replace=u'_', encoding='utf-8',
 class PAMixerDBusBridgeError(Exception): pass
 class PAMixerDBusError(Exception): pass
 class PAMixerIPCError(Exception): pass
+class PAMixerInvalidAction(Exception): pass
 
 class PAMixerDBusBridge(object):
 	'''Class to import/spawn glib/dbus eventloop in a
@@ -520,8 +521,7 @@ class PAMixerDBusBridge(object):
 			self.bus.add_signal_receiver(
 				ft.partial(self._relay_signal, sig_name=sig_name_last),
 				sig_name_last, path_keyword='src_obj_path' )
-			self.core.ListenForSignal(
-				'org.PulseAudio.Core1.{}'.format(sig_name), self._dbus.Array(signature='o') )
+			self.core.ListenForSignal(dbus_join('pulse', [sig_name]), self._dbus.Array(signature='o'))
 		self._glib.unix_signal_add(self._glib.PRIORITY_HIGH, signal.SIGTERM, self.loop.quit)
 		self.loop.run()
 		# XXX: wrapper loop here, in case of *clean* loop.quit() yet dbus not being dead
@@ -545,12 +545,10 @@ class PAMixerMenuItem(object):
 			dump['props'] = sorted(self.props.items())
 			pprint(dump.items(), sys.stderr)
 
-	def _prop_get(self, k):
-		# XXX: grab Name for Device and such
+	def _prop_get(self, k, _err_none=dbus_join('pulse', ['NoSuchPropertyError'])):
 		try: return self.call('Get', [self.dbus_type, k], obj=self.dbus_path, iface='props')
 		except PAMixerDBusError as err:
-			if err.args[0] == 'org.PulseAudio.Core1.NoSuchPropertyError': return None
-			raise
+			if err.args[0] != _err_none: raise
 
 	def __repr__(self):
 		return '<{}[{:x}] {}[{}]: {}>'.format(
@@ -615,8 +613,7 @@ class PAMixerMenuItem(object):
 
 	def _dbus_prop(name=None, dbus_name=None, translate=None):
 		dbus_name = dbus_name or name.title()
-		def dbus_prop_get(self):
-			return self.call('Get', [self.dbus_type, dbus_name], obj=self.dbus_path, iface='props')
+		def dbus_prop_get(self): return self._prop_get(dbus_name)
 		def dbus_prop_set(self, val):
 			return self.call( 'Set', [self.dbus_type, dbus_name, val],
 				obj=self.dbus_path, iface='props', translate=translate )
@@ -642,16 +639,18 @@ class PAMixerMenuItem(object):
 	_port_dbus_path = _dbus_prop(dbus_name='ActivePort', translate='path')
 	@property
 	def port(self):
-		assert self.t == 'sink', self.t
-		return self.call( 'Get',
-			[dbus_join('pulse', 'DevicePort'), 'Name'],
-			obj=self._port_dbus_path, iface='props' )
+		if self.t != 'sink': return
+		port_dbus_path = self._port_dbus_path
+		if port_dbus_path:
+			return self.call('Get', [dbus_join( 'pulse',
+				['DevicePort'] ), 'Name'], obj=port_dbus_path, iface='props')
 	@port.setter
 	def port(self, name):
-		assert self.t == 'sink', self.t
-		self._port_dbus_path = self.call(
-			'GetPortByName', [name],
-			obj=self.dbus_path, iface=self.dbus_type )
+		if self.t != 'sink':
+			raise PAMixerInvalidAction(( 'Setting ports is only'
+				' valid for {!r}-type streams, not {!r}-type' ).format('sink', self.t))
+		self._port_dbus_path = self.call( 'GetPortByName',
+			[name], obj=self.dbus_path, iface=self.dbus_type )
 
 
 	def muted_toggle(self): self.muted = not self.muted
@@ -730,7 +729,11 @@ class PAMixerMenu(object):
 							if item.volume < vol: item.volume = vol
 						elif m.group(1) == 'set': item.volume = vol
 					elif k == 'hidden': item.hidden = self.conf.parse_bool(v)
-					elif k == 'port': item.port = v
+					elif k == 'port':
+						try: item.port = v
+						except PAMixerInvalidAction as err:
+							log.error( 'Unable to set port for stream %r'
+								' (name: %r, config section: %s): %s', item, item.name, sec, err )
 					else:
 						log.debug('Unrecognized stream parameter (section: %r): %r (value: %r)', sec, k, v)
 
