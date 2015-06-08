@@ -96,6 +96,11 @@ def strip_dbus_types(data):
 		' {} (mro: {}, value: {})' ).format(type(data), type(data).mro(), data))
 
 
+p = p_ = lambda fmt,*a,**k: print(
+	bytes(fmt).format(*a,**k)
+	if isinstance(fmt, types.StringType)
+	else ([fmt, a, k] if a or k else repr(fmt)), file=sys.stderr )
+
 def uid_str( seed=None, length=4,
 		_seed_gen=it.chain.from_iterable(it.imap(xrange, it.repeat(2**30))) ):
 	seed_bytes = length * 6 / 8
@@ -848,20 +853,18 @@ class PAMixerUI(object):
 
 			attrs = self.c.A_REVERSE if item is item_hl else self.c.A_NORMAL
 			name_len = item_len_max - bool(self.conf.name_show_level) * level_len
-			name_uni = self.name_cut_funcs[self.conf.name_cut_from](item.name, name_len)
-			name_bytes = force_bytes(name_uni)
-			name_len_delta = len(name_bytes) - len(name_uni) # ncurses+unicode issue
+			name = force_bytes(self.name_cut_funcs[self.conf.name_cut_from](item.name, name_len))
 
 			if self.conf.name_show_level:
 				level = max(0, min(100, int(round(item.volume * 100))))
 				if level == 0: level = '--'
 				elif level == 100: level = '++'
 				else: level = '{:>2d}'.format(level)
-				name_bytes = '[{}] {}'.format(level, name_bytes)
+				name = '[{}] {}'.format(level, name)
 
 			win.addstr(row, 0, ' ' * pad_x)
-			win.addstr(row, pad_x, name_bytes, attrs)
-			item_name_end = item_len_max + pad_x + name_len_delta
+			win.addstr(row, pad_x, name, attrs)
+			item_name_end = item_len_max + pad_x
 			if win_len > item_name_end + mute_button_len:
 				if item.muted: mute_button = " M"
 				else: mute_button = " -"
@@ -941,7 +944,8 @@ class PAMixerUI(object):
 			elif key_match(key, 'q'): break
 
 	def run(self):
-		import curses # has a ton of global state
+		import locale, curses # has a ton of global state
+		locale.setlocale(locale.LC_ALL, '') # see top of "curses" module doc for rationale
 		self.c = curses
 		self.c.wrapper(self._run)
 
