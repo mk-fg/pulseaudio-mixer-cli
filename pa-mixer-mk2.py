@@ -299,8 +299,9 @@ class PAMixerDBusBridge(object):
 	def signal_handler(self, sig=None, frm=None):
 		log.debug('Signal handler triggered by: %s', sig)
 		if not self.child_sigs: self._child_readline(one_signal=True)
-		while self.child_sigs:
-			line = self.child_sigs.popleft()
+		while True:
+			try: line = self.child_sigs.popleft()
+			except IndexError: break
 			self.signal_func(**line)
 
 
@@ -866,8 +867,8 @@ class PAMixerUI(object):
 			win.addstr(row, pad_x, name, attrs)
 			item_name_end = item_len_max + pad_x
 			if win_len > item_name_end + mute_button_len:
-				if item.muted: mute_button = " M"
-				else: mute_button = " -"
+				if item.muted: mute_button = ' M'
+				else: mute_button = ' -'
 				win.addstr(row, item_name_end, mute_button)
 
 				if bar_len > 0:
