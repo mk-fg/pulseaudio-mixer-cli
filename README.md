@@ -67,7 +67,8 @@ most stuff is configurable via config file (described below).
 That's basically how it looks... in an overly narrow terminal (to fit on a github
 page), and without "inverted row" selection visible:
 
-	[++] HDMI 0 (hdmi-stereo@snd_hda_intel)                - [ ########################## ]
+	[++] Jack sink (PulseAudio JACK Sink)                  M [ ########################## ]
+	[++] HDMI 0 (hdmi-stereo@snd_hda_intel)                M [ ########################## ]
 	[81] ID 440 Analog (analog-stereo@snd_hda_intel)       - [ #####################----- ]
 	[35] mpv - Bax - Perceptions 206 on ETN.fm Jan-22-2015 - [ #########----------------- ]
 	[38] VLC media player (fraggod@malediction:24321)      - [ ##########---------------- ]
@@ -75,7 +76,7 @@ page), and without "inverted row" selection visible:
 	[27] ALSA plug-in [PillarsOfEternity]                  - [ #######------------------- ]
 
 Sink levels always displayed on top, "M" or "-" to the left of the bar is a mute
-indicator.
+indicator. Stuff that one never expects to use can be hidden (see below).
 
 Controls are arrow keys (incl. numpad) or their vi/emacs-style counterparts to
 pick row and adjust bars left and right, "m" or "space" to toggle mute, "q" to
@@ -97,12 +98,29 @@ For example:
 
 Such config is totally optional, and might be useful in case default options
 aren't suitable for a specific setup.
-See "pa-mixer-mk2.example.cfg" for the full list of these.
+See [pa-mixer-mk2.example.cfg](pa-mixer-mk2.example.cfg) for the full list of these.
+
 Commandline values (where available) override the ones defined in the config file.
 
 There is a shiny rewritten "pa-mixer-mk2.py" script version, which is probably
 way less tested, but have some extra features, which I can't be bothered to
 add/test for an old one, so maybe take a look at that one as well.
+
+Config for mk2 script can also contain sections for applying stuff (hide, volume
+min/max/set, sink ports, and such) to individual sinks/streams, for example:
+
+	[stream-sink-hdmi]
+	match[alsa.id]: ^HDMI\b
+	hidden: true
+
+This will hide any HDMI sinks, matching their "alsa.id" parameter by regexp.
+
+Running `./pa-mixer-mk2.py --dump-stream-parameters 2>stream_params.txt` will
+dump such parameters for all seen streams to "stream_params.txt", so that it'd
+be easy to choose how to match these.
+
+See more info on stream matching and parameters in
+[pa-mixer-mk2.example.cfg](pa-mixer-mk2.example.cfg).
 
 
 Internals
