@@ -590,7 +590,8 @@ class PAMixerMenuItem(object):
 		elif self.t == 'sink':
 			if self.conf.use_device_name: name = self._prop_get('Name')
 			else:
-				name = props.get('alsa.id')
+				name = props.get('alsa.id')\
+					or props.get('device.description') or props.get('device.api')
 				if not name:
 					try: name = '{}.{}'.format(props['device.api'], props['device.string'])
 					except KeyError:
