@@ -123,6 +123,18 @@ See more info on stream matching and parameters in
 [pa-mixer-mk2.example.cfg](pa-mixer-mk2.example.cfg).
 
 
+Debugging errors
+--------------------
+
+Run `./pa-mixer-mk2.py --debug --fatal --debug-pipes 2>pa-mixer.log` until
+whatever werid bug happens, then look into produced "pa-mixer.log".
+
+`--fatal` and `--debug-pipes` can probably be omitted in most cases, main point
+there is a `--debug` option, enabling output to stderr and then redirecting that
+to a file, so that it won't mess up the ui (as terminals show both stdout and
+stderr interleaved).
+
+
 Internals
 --------------------
 
