@@ -5,16 +5,17 @@ Interactive ncurses UI to control volume of pulse streams.
 
 Kinda like alsamixer, but focused not on sink volume levels (which can actually
 be controlled via alsamixer, with alsa-pulse plugin), but rather on volume of
-individual streams, so you can turn down the music to hear the stuff from game,
-mumble, skype or flash.
+individual streams, so you can turn down the music to hear the stuff from games,
+mumble, skype or browser.
 
 Control over individual process streams seem to be almost unique to pulseaudio,
-pity there aren't much tools built to harness it (at least weren't,
-initially). This one tries to fill the gap a bit.
+pity there aren't much tools built to harness it (at least weren't, initially).
+This one tries to fill the gap a bit.
 
 Thanks to the most awesome contributors, the tool is now useable with
 system-wide pulseaudio instance, can mute streams/sinks, works with vi-style
 keys as well as cursor and has many other fixes and features.
+
 
 
 Installation
@@ -57,6 +58,7 @@ patches welcome!).
 * PulseAudio 1.0+
 
 
+
 Usage
 --------------------
 
@@ -78,10 +80,30 @@ page), and without "inverted row" selection visible:
 Sink levels always displayed on top, "M" or "-" to the left of the bar is a mute
 indicator. Stuff that one never expects to use can be hidden (see below).
 
-Controls are arrow keys (incl. numpad) or their vi/emacs-style counterparts to
-pick row and adjust bars left and right, "m" or "space" to toggle mute, "q" to
-quit and "1"-"0" number row keys to set specific level (1=0%, 0=100%, only in
-pa-mixer-mk2).
+### Controls
+
+Controls are:
+
+* Arrow keys (including numpad) or their vi/emacs-style counterparts to pick row
+  and adjust bars left and right.
+
+  Vi keys: "k" - up, "j" - down, "h" - left, "l" - right.
+
+  Emacs keys: "p" - up, "n" - down, "b" - left, "f" - right.
+
+* "m" or "space" to toggle mute for selected sink or stream.
+
+* "q" to quit.
+
+* "1" through "0" (number row keys) to set specific level.
+
+  "1" - 10%, "2" - 20%, "3" - 30%, ..., "9" - 90%, "0" - 100%.
+
+  These are only available in pa-mixer-mk2.
+
+Supposed to mimic ones in alsamixer and be somewhat intuitive, hardcoded.
+
+### Config file
 
 Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg".
 See [RawConfigParser docs](http://docs.python.org/2/library/configparser.html)
@@ -122,6 +144,13 @@ be easy to choose how to match these.
 See more info on stream matching and parameters in
 [pa-mixer-mk2.example.cfg](pa-mixer-mk2.example.cfg).
 
+### Other misc usage hints
+
+* Running the thing in a drop-down terminal ("quake console" like guake,
+  yakuake, tilda, terra, yeahconsole) makes it into something like a keyboard
+  version of regular "tray volume app".
+
+
 
 Debugging errors
 --------------------
@@ -135,12 +164,15 @@ to a file, so that it won't mess up the ui (as terminals show both stdout and
 stderr interleaved).
 
 
+
 Internals
 --------------------
 
 Since I wasn't able to easily couple ncurses eventloop with glib/dbus one (which
-should poll for async signals), I settled on splitting glib loop into it's own
-process.
+should poll for async signals), and python-dbus doesn't seem to handle
+reconnects well, I settled on splitting glib loop into it's own process (which
+can just be restarted when/if dbus fails).
+
 Both loops communicate via pipes, opened before fork(), waking each other up
 from the respective loop (to process data being sent via pipes) when necessary
 with POSIX signals.

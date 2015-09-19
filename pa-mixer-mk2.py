@@ -480,6 +480,7 @@ class PAMixerDBusBridge(object):
 
 	@_glib_err_wrap
 	def _relay_signal(self, data=None, sig_name=None, src_obj_path=None):
+		log.debug('DBus signal (from %s): %s %s', src_obj_path, sig_name, data)
 		if sig_name == 'PropertyListUpdated':
 			self._core_notify( _signal=True, t='signal',
 				name='PropertyListUpdated', obj=src_obj_path, props=strip_dbus_types(data) )
