@@ -205,7 +205,11 @@ class PAMixerDBusBridge(object):
 				line = ''
 			for fd, ev in evs:
 				if fd == self.wakeup_fd.fileno():
-					self.wakeup_fd.read(1)
+					try: self.wakeup_fd.read(1)
+					except IOError as err:
+						if err.errno != errno.EAGAIN: raise
+						log.debug('Got EAGAIN from'
+							' wakeup_fd returned by poll(), this should not happen')
 					if line is None: line = '' # make sure to break the loop here
 				else:
 					if not ev & select.EPOLLIN: raise IOError('Poll returned error event: {}'.format(ev))
@@ -320,6 +324,9 @@ class PAMixerDBusBridge(object):
 	def child_start(self, gc_old_one=False):
 		if not self.poller:
 			self.poller, (r, w) = select.epoll(), os.pipe()
+			for fd in r, w:
+				fcntl.fcntl( fd, fcntl.F_SETFL,
+					fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK )
 			signal.set_wakeup_fd(w)
 			self.wakeup_fd = os.fdopen(r, 'rb', 0)
 			self.poller.register(self.wakeup_fd, select.EPOLLIN)
