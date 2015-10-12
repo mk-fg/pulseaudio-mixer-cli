@@ -73,14 +73,19 @@ def update_conf_from_file(conf, path_or_file):
 
 def mono_time():
 	if not hasattr(mono_time, 'ts'):
-		import ctypes
-		class timespec(ctypes.Structure):
-			_fields_ = [('tv_sec', ctypes.c_long), ('tv_nsec', ctypes.c_long)]
-		librt = ctypes.CDLL('librt.so.1', use_errno=True)
-		mono_time.get = librt.clock_gettime
-		mono_time.get.argtypes = [ctypes.c_int, ctypes.POINTER(timespec)]
-		mono_time.ctypes, mono_time.ts = ctypes, timespec
+		try:
+			import ctypes
+			class timespec(ctypes.Structure):
+				_fields_ = [('tv_sec', ctypes.c_long), ('tv_nsec', ctypes.c_long)]
+			librt = ctypes.CDLL('librt.so.1', use_errno=True)
+			mono_time.get = librt.clock_gettime
+			mono_time.get.argtypes = [ctypes.c_int, ctypes.POINTER(timespec)]
+			mono_time.ctypes, mono_time.ts = ctypes, timespec
+			mono_time()
+		except: # fallback in case of non-linux, abi diff or such
+			mono_time.ctypes, mono_time.ts = None, time.time
 	ctypes, ts = mono_time.ctypes, mono_time.ts()
+	if not ctypes: return ts
 	if mono_time.get(4, ctypes.pointer(ts)) != 0:
 		err = ctypes.get_errno()
 		raise OSError(err, os.strerror(err))
