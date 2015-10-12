@@ -71,6 +71,22 @@ def update_conf_from_file(conf, path_or_file):
 		conf.stream_params[sec] = params
 
 
+def mono_time():
+	if not hasattr(mono_time, 'ts'):
+		import ctypes
+		class timespec(ctypes.Structure):
+			_fields_ = [('tv_sec', ctypes.c_long), ('tv_nsec', ctypes.c_long)]
+		librt = ctypes.CDLL('librt.so.1', use_errno=True)
+		mono_time.get = librt.clock_gettime
+		mono_time.get.argtypes = [ctypes.c_int, ctypes.POINTER(timespec)]
+		mono_time.ctypes, mono_time.ts = ctypes, timespec
+	ctypes, ts = mono_time.ctypes, mono_time.ts()
+	if mono_time.get(4, ctypes.pointer(ts)) != 0:
+		err = ctypes.get_errno()
+		raise OSError(err, os.strerror(err))
+	return ts.tv_sec + ts.tv_nsec * 1e-9
+
+
 dbus_abbrevs = dict(
 	pulse='org.PulseAudio.Core1',
 	props='org.freedesktop.DBus.Properties' )
@@ -216,13 +232,13 @@ class PAMixerDBusBridge(object):
 					self.line_buff += chunk
 
 	def _child_readline(self, wait_for_cid=None, one_signal=False, init_line=False):
-		ts0 = time.time()
+		ts0 = mono_time()
 		while True:
 			if wait_for_cid and wait_for_cid in self.child_calls:
 				# XXX: check for errors indicating that dbus is gone here?
 				line_ts, line = self.child_calls.pop(wait_for_cid)
 				if random.random() < self.child_calls_cleanup[0]:
-					ts_deadline = time.time() - self.child_calls_cleanup[1]
+					ts_deadline = mono_time() - self.child_calls_cleanup[1]
 					for k, (line_ts, line) in self.child_calls.items():
 						if line_ts < ts_deadline: self.child_calls.pop(k, None)
 				return line
@@ -230,7 +246,7 @@ class PAMixerDBusBridge(object):
 			try:
 				line = self._child_readline_poll().strip()
 				if not line: # likely a break on signal, shouldn't be too often
-					if time.time() - ts0 > self.proxy_call_timeout:
+					if mono_time() - ts0 > self.proxy_call_timeout:
 						raise PAMixerIPCError('Call timeout: {:.2f}s'.format(self.proxy_call_timeout))
 					continue
 			except PAMixerIPCError as err:
@@ -250,7 +266,7 @@ class PAMixerDBusBridge(object):
 				self.child_sigs.append(line)
 				if one_signal: break
 			elif line['t'] in ['call_result', 'call_error']:
-				self.child_calls[line['cid']] = time.time(), line
+				self.child_calls[line['cid']] = mono_time(), line
 
 	def call(self, func, args, **call_kws):
 		self.child_check_restart()
@@ -543,7 +559,7 @@ class PAMixerMenuItem(object):
 	def __init__(self, menu, obj_type, obj_path):
 		self.menu, self.t, self.conf, self.call = menu, obj_type, menu.conf, menu.call
 		self.dbus_path, self.dbus_type = obj_path, dbus_join('pulse', [self.dbus_types[self.t]])
-		self.hidden, self.created_ts = False, time.time()
+		self.hidden, self.created_ts = False, mono_time()
 		self.update_name()
 
 		if self.conf.dump_stream_params:
@@ -896,7 +912,7 @@ class PAMixerUI(object):
 
 	@item_hl.setter
 	def item_hl(self, item):
-		self._item_hl, self._item_hl_ts = item, time.time()
+		self._item_hl, self._item_hl_ts = item, mono_time()
 
 
 	def _run(self, stdscr):
