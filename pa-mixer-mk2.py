@@ -26,6 +26,7 @@ class Conf(object):
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
 	watchdog = False
+	watchdog_opts = None
 	watchdog_ping_interval = 20
 	watchdog_ping_timeout = 70
 
@@ -77,16 +78,12 @@ def update_conf_from_file(conf, path_or_file):
 
 def mono_time():
 	if not hasattr(mono_time, 'ts'):
-		try:
-			class timespec(ctypes.Structure):
-				_fields_ = [('tv_sec', ctypes.c_long), ('tv_nsec', ctypes.c_long)]
-			librt = ctypes.CDLL('librt.so.1', use_errno=True)
-			mono_time.get = librt.clock_gettime
-			mono_time.get.argtypes = [ctypes.c_int, ctypes.POINTER(timespec)]
-			mono_time.ts = timespec
-			mono_time.fallback = mono_time() is None
-		except: mono_time.fallback = True
-	if mono_time.fallback: return time.time()
+		class timespec(ctypes.Structure):
+			_fields_ = [('tv_sec', ctypes.c_long), ('tv_nsec', ctypes.c_long)]
+		librt = ctypes.CDLL('librt.so.1', use_errno=True)
+		mono_time.get = librt.clock_gettime
+		mono_time.get.argtypes = [ctypes.c_int, ctypes.POINTER(timespec)]
+		mono_time.ts = timespec
 	ts = mono_time.ts()
 	if mono_time.get(4, ctypes.pointer(ts)) != 0:
 		err = ctypes.get_errno()
@@ -994,54 +991,94 @@ class PAMixerUI(object):
 
 
 
-def watchdog_run(pid, conf):
+def watchdog_run(conf, args):
 	signal.signal(signal.SIGUSR2, watchdog_run_pong)
-	sys.stdout.write('ready\n')
-	sys.stdout.flush()
-	close_fds = ['stdin', 'stdout', 'stderr']
-	if conf.debug: close_fds.pop()
-	for s in close_fds: getattr(sys, s).close()
-	ts_ping = ts_timeout = None
+	proc = proc_poller = None
+	proc_pongs = 0
+
 	while True:
+		if not proc:
+			r, w = os.pipe()
+			proc_opts = list(args) + [
+				'--parent-pid-do-not-use', 'w{}-{}'.format(os.getpid(), w) ]
+			proc = subprocess.Popen(self_exec_cmd(*proc_opts))
+			os.close(w)
+			assert os.read(r, 1) == '!'
+			proc_poller = select.epoll()
+			proc_poller.register(r, select.EPOLLHUP)
+			watchdog_run.ping_last_ts = ts_ping = ts_timeout = None
+
 		ts = mono_time()
+
 		if ts_timeout and ts >= ts_timeout:
-			log.debug('wd: !!! restart signal (to %s) !!!', pid)
-			os.kill(pid, signal.SIGALRM)
-			break
+			proc_running, proc_restart = proc.poll() is None, proc_pongs >= 2
+			log.debug(
+				'wd: !!! sending exit-signal (to %s, running: %s, restart: %s, pongs: %s) !!!',
+				proc.pid, proc_running, proc_restart, proc_pongs )
+			if proc:
+				if proc_running:
+					try:
+						proc.send_signal(signal.SIGALRM)
+						if not proc_poller.poll(min(conf.watchdog_ping_timeout, 3)):
+							log.debug('wd: killing stuck pid %s', proc.pid)
+							proc.send_signal(signal.SIGCONT)
+							proc.kill()
+					except (OSError, IOError) as err:
+						if err.errno not in [errno.ESRCH, errno.EINTR]: raise
+				proc.wait()
+				proc, proc_pongs = None, 0
+			if not proc_restart:
+				log.error( 'wd: main process failed without enough'
+					' pongs from it, not restarting to avoid endless restart-loop' )
+				return 1
+			continue
+
 		if ts_ping and ts >= ts_ping:
-			log.debug('wd: sending ping (to %s)', pid)
-			os.kill(pid, signal.SIGUSR2)
+			log.debug('wd: sending ping (to %s)', proc.pid)
+			try: proc.send_signal(signal.SIGUSR2)
+			except OSError as err:
+				if err.errno != errno.ESRCH: raise
+				continue
 			ts_ping = None
+
 		if not ts_ping:
 			ts_ping_last = getattr(watchdog_run, 'ping_last_ts', None)
 			if ts_ping_last:
 				watchdog_run.ping_last_ts = None
 				ts_ping = ts_ping_last + conf.watchdog_ping_interval
 				ts_timeout = ts_ping_last + conf.watchdog_ping_timeout
+				proc_pongs += 1
+
 		deadline = min(ts_ping or ts_timeout, ts_timeout or ts_ping)\
 			if ts_ping or ts_timeout else (ts + conf.watchdog_ping_interval)
-		time.sleep(max(0.1, deadline - ts))
-		try: os.kill(pid, 0)
+		try: err = proc_poller.poll(max(0.1, deadline - ts))
+		except IOError: err = None
+		try: proc.send_signal(0)
 		except OSError as err:
 			if err.errno != errno.ESRCH: raise
-			break
+			err = True
+		if err:
+			err = proc.wait()
+			if err != 0: proc = None
+			log.debug( 'wd: detected process exit'
+				' (code: %s), %s', err, 'exiting' if proc else 'restarting it' )
+			if proc: return err
 
 def watchdog_run_pong(sig=None, frm=None):
 	watchdog_run.ping_last_ts = mono_time()
 	# log.debug('wd: received pong (ts: %s)', watchdog_run.ping_last_ts)
 
-def watchdog_handle(pid, args):
+def watchdog_handle(pid):
 	def ping_recv(sig=None, frm=None):
 		# log.debug('wd-handler: received ping from wd (%s)', pid)
 		watchdog_handle.pong_pid = pid
-	def restart(sig, frm):
-		log.debug('wd-handler: !!! received restart signal (from %s) !!!', pid)
+	def die(sig, frm):
+		log.debug('wd-handler: !!! received exit-signal (from %s) !!!', pid)
 		try: curses.endwin()
 		except: pass
-		exec_args = self_exec_cmd(*args)
-		os.execvp(exec_args[0], exec_args)
+		sys.exit(1)
 	signal.signal(signal.SIGUSR2, ping_recv)
-	signal.signal(signal.SIGALRM, restart)
+	signal.signal(signal.SIGALRM, die)
 	ping_recv()
 	watchdog_handle_ping()
 
@@ -1087,7 +1124,7 @@ def main(args=None):
 			' mess up curses interface, thus silenced that way by default).')
 	parser.add_argument('-w', '--watchdog',
 		action='store_true', default=conf.watchdog,
-		help='Do run watchdog pid in the background to restart the thing if it hangs.')
+		help='Run watchdog pid to restart the thing if it hangs.')
 	parser.add_argument('--dump-stream-params',
 		action='store_true', help='Dump all parameters for each stream to stderr.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
@@ -1116,7 +1153,7 @@ def main(args=None):
 
 	if conf.parent_pid_do_not_use:
 		pid = conf.parent_pid_do_not_use
-		if pid.startswith('w'): return watchdog_run(int(pid.lstrip('w')), conf)
+		if pid.startswith('w'): conf.watchdog_opts = map(int, pid.lstrip('w').split('-', 1))
 		else:
 			dbus_bridge = PAMixerDBusBridge(core_pid=int(pid), log_pipes=conf.debug_pipes)
 			if conf.use_media_name: dbus_bridge.handle_proplist_updates = True
@@ -1125,14 +1162,15 @@ def main(args=None):
 				if log.isEnabledFor(logging.INFO):
 					log_lines( log.info,
 						['Last pipe traffic (child pid side):'] + list(dbus_bridge.line_debug) )
-		raise RuntimeError() # should never get here
 
-	if conf.watchdog:
-		watchdog_opts = ['--parent-pid-do-not-use', 'w{}'.format(os.getpid())]
-		if conf.debug: watchdog_opts.append('--debug')
-		proc = subprocess.Popen(self_exec_cmd(*watchdog_opts), stdout=subprocess.PIPE)
-		assert proc.stdout.readline() == 'ready\n'
-		watchdog_handle(proc.pid, args)
+	if not conf.watchdog_opts:
+		if conf.watchdog:
+			try: return watchdog_run(conf, args)
+			except KeyboardInterrupt: return 0
+	else:
+		pid, fd = conf.watchdog_opts
+		os.write(fd, '!')
+		watchdog_handle(pid)
 
 	dbus_bridge = ['--parent-pid-do-not-use', bytes(os.getpid())]
 	if conf.debug:
@@ -1154,7 +1192,8 @@ def main(args=None):
 		try: curses_ui.run()
 		except:
 			if log.isEnabledFor(logging.INFO):
-				log_lines(log.info, ['Last pipe traffic (parent pid side):'] + list(dbus_bridge.line_debug))
+				log_lines( log.info,
+					['Last pipe traffic (parent pid side):'] + list(dbus_bridge.line_debug) )
 			raise
 		log.debug('Finished')
 
