@@ -507,10 +507,11 @@ class PAMixerDBusBridge(object):
 
 	@_glib_err_wrap
 	def _relay_signal(self, data=None, sig_name=None, src_obj_path=None):
-		log.debug('DBus signal (from %s): %s %s', src_obj_path, sig_name, data)
-		if sig_name == 'PropertyListUpdated':
+		props = sig_name == 'PropertyListUpdated' and strip_dbus_types(data)
+		log.debug('DBus signal (from %s): %s %s', src_obj_path, sig_name, props or data)
+		if props:
 			self._core_notify( _signal=True, t='signal',
-				name='PropertyListUpdated', obj=src_obj_path, props=strip_dbus_types(data) )
+				name='PropertyListUpdated', obj=src_obj_path, props=props )
 		else:
 			self._core_notify(_signal=True, t='signal', name=sig_name, obj=data)
 
@@ -1033,31 +1034,26 @@ def watchdog_run(conf, args):
 				return 1
 			continue
 
+		ts_ping_last = getattr(watchdog_run, 'ping_last_ts', None)
+		if ts_ping_last:
+			watchdog_run.ping_last_ts = None
+			proc_pongs += 1
+			ts_timeout = ts_ping_last + conf.watchdog_ping_timeout
+			if not ts_ping: ts_ping = ts_ping_last + conf.watchdog_ping_interval
+
 		if ts_ping and ts >= ts_ping:
 			log.debug('wd: sending ping (to %s)', proc.pid)
 			try: proc.send_signal(signal.SIGUSR2)
 			except OSError as err:
 				if err.errno != errno.ESRCH: raise
 				continue
-			ts_ping = None
-
-		if not ts_ping:
-			ts_ping_last = getattr(watchdog_run, 'ping_last_ts', None)
-			if ts_ping_last:
-				watchdog_run.ping_last_ts = None
-				ts_ping = ts_ping_last + conf.watchdog_ping_interval
-				ts_timeout = ts_ping_last + conf.watchdog_ping_timeout
-				proc_pongs += 1
+			while ts_ping <= ts: ts_ping = ts_ping + conf.watchdog_ping_interval
 
 		deadline = min(ts_ping or ts_timeout, ts_timeout or ts_ping)\
 			if ts_ping or ts_timeout else (ts + conf.watchdog_ping_interval)
-		try: err = proc_poller.poll(max(0.1, deadline - ts))
-		except IOError: err = None
-		try: proc.send_signal(0)
-		except OSError as err:
-			if err.errno != errno.ESRCH: raise
-			err = True
-		if err:
+		try: proc_poller.poll(max(0.1, deadline - ts))
+		except IOError: pass
+		if proc.poll() is not None:
 			err = proc.wait()
 			if err != 0: proc = None
 			log.debug( 'wd: detected process exit'

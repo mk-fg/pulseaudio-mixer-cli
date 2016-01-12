@@ -50,7 +50,7 @@ that is indeed a problem, currently there is no way to use this script without
 the module (though probably not hard to rewrite it to use PA protocol instead,
 patches welcome!).
 
-For the list of similar tools that don't use dbus, see [Links](#Links) section
+For the list of similar tools that don't use dbus, see [Links](#links) section
 below.
 
 ### Requirements
@@ -174,10 +174,12 @@ Links
 * [pulsemixer](https://github.com/GeorgeFilipkin/pulsemixer/)
 
   Similar Python-3-based mixer with more colorful and comprehensive UI and no
-  dbus dependency (uses libpulse via ctypes) or any deps except python-3 at all.
+  dbus dependency (uses libpulse via ctypes) or any extra deps at all.
 
-  Should be more future-proof, given that dbus module in pulse seem to be
-  deprecated and unmaintained.
+  Should be more future-proof, given python-3 and that dbus module in pulse seem
+  to be deprecated and unmaintained.
+
+* [pamixer](https://github.com/valodim/pamixer)
 
 
 
