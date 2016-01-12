@@ -50,6 +50,9 @@ that is indeed a problem, currently there is no way to use this script without
 the module (though probably not hard to rewrite it to use PA protocol instead,
 patches welcome!).
 
+For the list of similar tools that don't use dbus, see [Links](#Links) section
+below.
+
 ### Requirements
 
 * Python 2.7
@@ -162,6 +165,19 @@ whatever werid bug happens, then look into produced "pa-mixer.log".
 there is a `--debug` option, enabling output to stderr and then redirecting that
 to a file, so that it won't mess up the ui (as terminals show both stdout and
 stderr interleaved).
+
+
+
+Links
+--------------------
+
+* [pulsemixer](https://github.com/GeorgeFilipkin/pulsemixer/)
+
+  Similar Python-3-based mixer with more colorful and comprehensive UI and no
+  dbus dependency (uses libpulse via ctypes) or any deps except python-3 at all.
+
+  Should be more future-proof, given that dbus module in pulse seem to be
+  deprecated and unmaintained.
 
 
 
