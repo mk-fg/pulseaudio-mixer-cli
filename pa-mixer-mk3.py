@@ -303,15 +303,14 @@ class PAMixerMenu(object):
 			self.pulse.event_listen_stop()
 
 	@contextmanager
-	def update_wakeup(self, loop_interval=0.01):
+	def update_wakeup(self, loop_interval=0.03):
 		'Anything pulse-related MUST be done in this context.'
 		with self._pulse_hold:
 			for n in range(int(5.0 / loop_interval)):
 				# wakeup only works when loop is actually started,
 				#  which might not be the case regardless of any locks.
 				self.pulse.event_listen_stop()
-				if self._pulse_lock.acquire(False): break
-				time.sleep(loop_interval)
+				if self._pulse_lock.acquire(timeout=loop_interval): break
 			else:
 				raise RuntimeError('poll_wakeup() hangs, likely locking issue')
 			try: yield self.pulse
