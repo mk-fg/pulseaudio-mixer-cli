@@ -21,43 +21,36 @@ keys as well as cursor and has many other fixes and features.
 Installation
 --------------------
 
-Just copy the script to wherever is convenient (~/bin or /usr/local/bin comes to
-mind), do a "chmod +x" on it, run.
+Copy one of the scripts (`pa-mixer-mk3.py` is the latest one) to wherever is
+convenient (~/bin or /usr/local/bin comes to mind), do a "chmod +x" on it, run.
 
-Make sure you have `load-module module-dbus-protocol` line in
-/etc/pulse/default.pa (or /etc/pulse/system.pa, if system-wide daemon is used),
-especially on Ubuntu, where it seem to be disabled by default
-(see [#1](https://github.com/mk-fg/pulseaudio-mixer-cli/issues/1)).
+There are three scripts:
 
-There is now also "pa-mixer-mk2.py" script in the repo, which is a rewrite of
-the original version, and might have some extra features and/or bugs.
+* `pulseaudio-mixer-cli.py` - initial version, uses semi-isolated dbus
+  subprocess, Python-2.7 only.
 
-### Warning
+* `pa-mixer-mk2.py` - rewrite, with separate dbus/glib subprocess and more
+  features, also Python-2.7.
 
-As of pulseaudio-6.0, loading module-dbus-protocol issues following warnings:
+* `pa-mixer-mk3.py` - same as mk2, but for Python-3.x and uses
+  [pulsectl module](https://github.com/mk-fg/python-pulse-control)
+  (libpulse wrapper) to communicate with pulseaudio daemon (from a thread)
+  instead of dbus.
 
-	[pulseaudio] module-dbus-protocol.c: module-dbus-protocol is
-	  currently unsupported, and can sometimes cause PulseAudio crashes.
-	[pulseaudio] module-dbus-protocol.c: The most popular use
-	  cases for module-dbus-protocol are related to changing equalizer
-	  settings and LADSPA plugin parameters at runtime.
-	[pulseaudio] module-dbus-protocol.c: If you don't use such
-	  functionality, it's possible that you don't actually need this module.
+Only latest script is updated. Older ones are left in the repo just in case.
 
-I haven't experienced any crashes with newer PA versions first-hand,
-and killing/restarting PA seem to only cause a brief sound disruption, but if
-that is indeed a problem, currently there is no way to use this script without
-the module (though probably not hard to rewrite it to use PA protocol instead,
-patches welcome!).
+If `pa-mixer-mk3.py` (latest) script version will be used,
+[pulsectl](https://github.com/mk-fg/python-pulse-control) python module must be
+installed (either via OS packaging system, or e.g. `pip install --user pulsectl`).
 
-For the list of similar tools that don't use dbus, see [Links](#links) section
-below.
+If using older scripts with dbus interface, make sure you have `load-module
+module-dbus-protocol` line in /etc/pulse/default.pa (or /etc/pulse/system.pa, if
+system-wide daemon is used) and dbus-python package installed.
 
-### Requirements
+### Requirements (pa-mixer-mk3.py)
 
-* Python 2.7
-* dbus-python (standard python dbus bindings)
-* PyGObject (aka PyGI, likely installed if dbus-python is)
+* Python 3.x
+* [pulsectl](https://github.com/mk-fg/python-pulse-control) python module
 * PulseAudio 1.0+
 
 
@@ -65,9 +58,8 @@ below.
 Usage
 --------------------
 
-Run the script (either "pulseaudio-mixer-cli.py" or "pa-mixer-mk2.py") with "-h"
-or "--help" option to see various other options, but there aren't that many -
-most stuff is configurable via config file (described below).
+Run the script with "-h" or "--help" option to see various parameters, but there
+aren't that many - most stuff is configurable via config file (described below).
 
 That's basically how it looks... in an overly narrow terminal (to fit on a github
 page), and without "inverted row" selection visible:
@@ -102,8 +94,6 @@ Controls are:
 
   "1" - 10%, "2" - 20%, "3" - 30%, ..., "9" - 90%, "0" - 100%.
 
-  These are only available in pa-mixer-mk2.
-
 Supposed to mimic ones in alsamixer and be somewhat intuitive, hardcoded.
 
 ### Config file
@@ -116,7 +106,7 @@ For example:
 
 	[default]
 	adjust-step: 2
-	max-level: 131072
+	max-volume: 1.3
 	use-media-name: true
 	focus-default: last
 	focus-new-items: false
@@ -127,12 +117,8 @@ See [pa-mixer.example.cfg](pa-mixer.example.cfg) for the full list of these.
 
 Commandline values (where available) override the ones defined in the config file.
 
-There is a shiny rewritten "pa-mixer-mk2.py" script version, which is probably
-way less tested, but have some extra features, which I can't be bothered to
-add/test for an old one, so maybe take a look at that one as well.
-
-Config for mk2 script can also contain sections for applying stuff (hide, volume
-min/max/set, sink ports, and such) to individual sinks/streams, for example:
+Config can also contain sections for applying stuff (hide, volume min/max/set,
+sink ports, and such) to individual sinks/streams, for example:
 
 	[stream-sink-hdmi]
 	match[alsa.id]: ^HDMI\b
@@ -158,66 +144,21 @@ See more info on stream matching and parameters in
 Debugging errors
 --------------------
 
-Run `./pa-mixer-mk2.py --debug --fatal --debug-pipes 2>pa-mixer.log` until
-whatever werid bug happens, then look into produced "pa-mixer.log".
+Run `./pa-mixer-mk3.py --debug --fatal 2>pa-mixer.log` until whatever werid bug
+happens, then look into produced "pa-mixer.log".
 
-`--fatal` and `--debug-pipes` can probably be omitted in most cases, main point
-there is a `--debug` option, enabling output to stderr and then redirecting that
-to a file, so that it won't mess up the ui (as terminals show both stdout and
-stderr interleaved).
-
+`--fatal` can probably be omitted in most cases, main point there is a `--debug`
+option, enabling output to stderr and then redirecting that to a file, so that
+it won't mess up the ui (as terminals show both stdout and stderr interleaved).
 
 
-Links
+
+Other similar projects
 --------------------
 
 * [pulsemixer](https://github.com/GeorgeFilipkin/pulsemixer/)
 
-  Similar Python-3-based mixer with more colorful and comprehensive UI and no
-  dbus dependency (uses libpulse via ctypes) or any extra deps at all.
-
-  Should be more future-proof, given python-3 and that dbus module in pulse seem
-  to be deprecated and unmaintained.
+  Similar Python-3-based pulse mixer with way more colorful UI, individual
+  channel volumes and without any extra deps.
 
 * [pamixer](https://github.com/valodim/pamixer)
-
-
-
-Internals
---------------------
-
-Since I wasn't able to easily couple ncurses eventloop with glib/dbus one (which
-should poll for async signals), and python-dbus doesn't seem to handle
-reconnects well, I settled on splitting glib loop into it's own process (which
-can just be restarted when/if dbus fails).
-
-Both loops communicate via pipes, opened before fork(), waking each other up
-from the respective loop (to process data being sent via pipes) when necessary
-with POSIX signals.
-
-Pulseaudio dbus interface was introduced in 1.0-dev branch (which is actually
-fairly old), but was merged mid-2011 into mainline versions.
-More documentation on it can be found via introspection or on [PA
-wiki](http://pulseaudio.org/wiki/DBusInterface).
-
-Since interface processes signals about new/removed streams and sinks, and not
-just polls the data on some intervals, it should be fairly responsive to these
-changes.
-There are signals for volume updates, but they aren't processed just for the
-sake of simplicity. Volume levels are polled on occasional changes anyway, so
-they should be updated on the ui update events.
-
-DBus reconnection (sometimes via re-exec, because python-dbus seem to cache more
-stuff than it probably should) is built-in, so there should be no problem with
-transient pulseaudio processes, although the fact that the client is connected
-via dbus interface might keep them alive indefinitely.
-
-Starting the mixer should also trigger pulseaudio start, if proper dbus
-autolaunch service descriptions are installed in the system.
-
-Script should also work with system-wide pulseaudio daemon (usage of which is
-[highly discouraged by developers](http://www.freedesktop.org/wiki/Software/PulseAudio/Documentation/User/WhatIsWrongWithSystemWide),
-btw) - in that case neither dbus system nor session bus is accessed, since
-ServerLookup interface doesn't seem to be available on either one (at least in
-2.1), and pa-private bus is accessed via well-known socket location at
-/run/pulse/dbus-socket (see also [#4](https://github.com/mk-fg/pulseaudio-mixer-cli/issues/4)).
