@@ -123,7 +123,7 @@ For example:
 
 Such config is totally optional, and might be useful in case default options
 aren't suitable for a specific setup.
-See [pa-mixer-mk2.example.cfg](pa-mixer-mk2.example.cfg) for the full list of these.
+See [pa-mixer.example.cfg](pa-mixer.example.cfg) for the full list of these.
 
 Commandline values (where available) override the ones defined in the config file.
 
@@ -145,7 +145,7 @@ dump such parameters for all seen streams to "stream_params.txt", so that it'd
 be easy to choose how to match these.
 
 See more info on stream matching and parameters in
-[pa-mixer-mk2.example.cfg](pa-mixer-mk2.example.cfg).
+[pa-mixer.example.cfg](pa-mixer.example.cfg).
 
 ### Other misc usage hints
 
