@@ -7,7 +7,7 @@ import os, sys, re, time, logging, configparser
 import base64, hashlib, unicodedata
 import signal, threading
 
-from pulsectl import Pulse, PulseLoopStop
+from pulsectl import Pulse, PulseLoopStop, PulseDisconnected
 
 
 class LogMessage(object):
@@ -243,6 +243,7 @@ class PAMixerMenu(object):
 	def __init__(self, pulse, conf=None, fatal=False):
 		self.pulse, self.fatal, self.conf = pulse, fatal, conf or Conf()
 		self.items, self.item_objs = list(), OrderedDict()
+		self.connected = None
 		self._update_lock = self._update_signal = False
 		self._pulse_hold, self._pulse_lock = threading.Lock(), threading.Lock()
 
@@ -282,10 +283,13 @@ class PAMixerMenu(object):
 	def update_wakeup_poller( self, wakeup_handler,
 			wakeup_pid=None, wakeup_sig=signal.SIGUSR1 ):
 		if wakeup_pid is None: wakeup_pid = os.getpid()
-		signal.signal(wakeup_sig, wakeup_handler)
+		signal.signal(wakeup_sig, lambda sig,frm: wakeup_handler())
 		poller_thread = None
-		def ev_cb(ev):
-			log.debug('pulsectl event: {} {}', ev.facility, ev.index)
+		def ev_cb(ev=None):
+			if not ev:
+				log.debug('pulsectl disconnected')
+				wakeup_handler(disconnected=True)
+			else: log.debug('pulsectl event: {} {}', ev.facility, ev.index)
 			if threading.current_thread() is poller_thread: os.kill(wakeup_pid, wakeup_sig)
 			else: wakeup_handler()
 		def poller():
@@ -296,6 +300,7 @@ class PAMixerMenu(object):
 			while True:
 				with self._pulse_hold: self._pulse_lock.acquire() # ...threads ;(
 				try: self.pulse.event_listen()
+				except PulseDisconnected: ev_cb()
 				finally: self._pulse_lock.release()
 		try: yield poller
 		finally:
@@ -316,7 +321,10 @@ class PAMixerMenu(object):
 			try: yield self.pulse
 			finally: self._pulse_lock.release()
 
-	def update_wakeup_handler(self, sig=None, frm=None):
+	def update_wakeup_handler(self, disconnected=False):
+		if disconnected: self.connected = False
+		elif self.connected is None: self.connected = True
+		elif not self.connected: sys.exit(0) # XXX: reconnect
 		# XXX: do less than full refresh here
 		self._update_signal = True
 
