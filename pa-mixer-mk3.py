@@ -218,13 +218,13 @@ class PAMixerMenuItem(object):
 	@property
 	def port(self):
 		if self.t != 'sink': return
-		return self.obj.active_port
+		return self.obj.port_active
 	@port.setter
 	def port(self, name):
 		if self.t != 'sink':
-			raise PAMixerInvalidAction(( 'Setting ports is only'
-				' valid for {!r}-type streams, not {!r}-type' ).format('sink', self.t))
-		# XXX: implement port setting
+			log.warning( 'Setting ports is only'
+				' available for {!r}-type streams, not {!r}-type', 'sink', self.t )
+		with self.menu.update_wakeup() as pulse: pulse.port_set(self.obj, name)
 
 
 	def muted_toggle(self): self.muted = not self.muted

@@ -126,7 +126,7 @@ sink ports, and such) to individual sinks/streams, for example:
 
 This will hide any HDMI sinks, matching their "alsa.id" parameter by regexp.
 
-Running `./pa-mixer-mk2.py --dump-stream-parameters 2>stream_params.txt` will
+Running `./pa-mixer-mk3.py --dump-stream-parameters 2>stream_params.txt` will
 dump such parameters for all seen streams to "stream_params.txt", so that it'd
 be easy to choose how to match these.
 
@@ -159,6 +159,6 @@ Other similar projects
 * [pulsemixer](https://github.com/GeorgeFilipkin/pulsemixer/)
 
   Similar Python-3-based pulse mixer with way more colorful UI, individual
-  channel volumes and without any extra deps.
+  channel volumes, source volume and port control, and without any extra deps.
 
 * [pamixer](https://github.com/valodim/pamixer)
