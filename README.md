@@ -3,10 +3,15 @@ pulseaudio-mixer-cli
 
 Interactive ncurses UI to control volume of pulse streams.
 
-Kinda like alsamixer, but focused not on sink volume levels (which can actually
-be controlled via alsamixer, with alsa-pulse plugin), but rather on volume of
+Kinda like alsamixer, focused not on sink volume levels (which can actually be
+controlled via alsamixer, with alsa-pulse plugin), but rather on volume of
 individual streams, so you can turn down the music to hear the stuff from games,
 mumble, skype or browser.
+
+In addition to interactive UI, script allows to match and configure sink/stream
+parameters via config file, so that when specific sink or stream appears,
+e.g. its volume can be capped, port changed, UI title adjusted, be hidden in UI,
+stuff like that.
 
 Control over individual process streams seem to be almost unique to pulseaudio,
 pity there aren't much tools built to harness it (at least weren't, initially).
@@ -124,7 +129,15 @@ sink ports, and such) to individual sinks/streams, for example:
 	match[alsa.id]: ^HDMI\b
 	hidden: true
 
-This will hide any HDMI sinks, matching their "alsa.id" parameter by regexp.
+	[stream-firefox-media]
+	equals[application.name]: CubebUtils
+	name: firefox
+	volume-max: 0.2
+
+This will hide any HDMI sinks, matching their "alsa.id" parameter by regexp,
+match sound from firefox by "application.name" and set more descriptive name
+there, as well as cap initial volume level for these at "0.2" (lower to this
+value if it is set higher initially).
 
 Running `./pa-mixer-mk3.py --dump-stream-parameters 2>stream_params.txt` will
 dump such parameters for all seen streams to "stream_params.txt", so that it'd

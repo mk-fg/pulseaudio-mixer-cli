@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 import os, sys, re, time, logging, configparser
 import base64, hashlib, unicodedata
@@ -115,7 +115,7 @@ class PAMixerMenuItem(object):
 		self.menu, self.conf = menu, menu.conf
 		self.t, self.uid, self.obj = obj_t, obj_id, obj
 		self.hidden, self.created_ts = False, time.monotonic()
-		self.update_name()
+		self.name_update()
 
 		if self.conf.dump_stream_params:
 			from pprint import pprint
@@ -127,27 +127,16 @@ class PAMixerMenuItem(object):
 		return '<{}[{:x}] {}[{}]: {}>'.format(
 			self.__class__.__name__, id(self), self.t, self.uid, self.name )
 
+	def name_update(self, name=None):
+		if not name: name = self._get_name() or 'knob'
+		self.name_base = self.name = name
 
-	def update_name(self):
-		self.name = self._get_name()
-		if not self.name: self.name = self._get_name_unique('null')
-
-	def _strip_noise_bytes(self, obj, replace='_'):
-		'''Make sure there arent any random weird chars that dont belong to any alphabet.
-			Only ascii non-letters are allowed, as fancy symbols don't seem to work well with curses.'''
-		if not isinstance(obj, str): obj = str(obj)
-		obj_ucs = list()
-		for uc in obj:
-			try:
-				unicodedata.name(uc)
-				if unicodedata.category(uc) != 'Ll': uc.encode('ascii')
-			except (ValueError, UnicodeEncodeError):
-				if replace: obj_ucs.append(replace)
-			else: obj_ucs.append(uc)
-		return ''.join(obj_ucs)
-
-	def _get_name_unique(self, name):
-		return '{} #{}'.format(name, uid_str())
+	def _get_name(self):
+		try: return self._get_name_descriptive()
+		except Exception as err:
+			if self.menu.fatal: raise
+			log.info('Failed to get descriptive name for {!r} ({}): {}', self.t, self.uid, err)
+		return self.t
 
 	def _get_name_descriptive(self):
 		'Can probably fail with KeyError if something is really wrong with stream/device props.'
@@ -160,8 +149,7 @@ class PAMixerMenuItem(object):
 				name = props.get('media.name')
 				if name and name not in self.conf.placeholder_media_names: return name
 			try: name = props['application.name']
-			except KeyError: # some synthetic stream with non-descriptive name
-				name = self._get_name_unique(props['media.name'])
+			except KeyError: name = props['media.name'] # some synthetic stream with non-descriptive name
 			ext = '({application.process.user}@'\
 				'{application.process.host}:{application.process.id})'
 
@@ -172,8 +160,7 @@ class PAMixerMenuItem(object):
 					or props.get('device.description') or props.get('device.api')
 				if not name:
 					try: name = '{}.{}'.format(props['device.api'], props['device.string'])
-					except KeyError:
-						self._get_name_unique(props['device.description'])
+					except KeyError: name = props['device.description']
 				ext = '({device.profile.name}@{alsa.driver_name})'
 
 		else: raise KeyError('Unknown menu-item type (for naming): {}'.format(self.t))
@@ -188,12 +175,19 @@ class PAMixerMenuItem(object):
 					' (type: {!r}, uid: {}) due to missing key: {}', self.t, self.uid, err )
 		return name
 
-	def _get_name(self):
-		try: return self._get_name_descriptive()
-		except Exception as err:
-			if self.menu.fatal: raise
-			log.info('Failed to get descriptive name for {!r} ({}): {}', self.t, self.uid, err)
-		return self._get_name_unique(self.t)
+	def _strip_noise_bytes(self, obj, replace='_'):
+		'''Make sure there arent any random weird chars that dont belong to any alphabet.
+			Only ascii non-letters are allowed, as fancy symbols don't seem to work well with curses.'''
+		if not isinstance(obj, str): obj = str(obj)
+		obj_ucs = list()
+		for uc in obj:
+			try:
+				unicodedata.name(uc)
+				if unicodedata.category(uc) != 'Ll': uc.encode('ascii')
+			except (ValueError, UnicodeEncodeError):
+				if replace: obj_ucs.append(replace)
+			else: obj_ucs.append(uc)
+		return ''.join(obj_ucs)
 
 
 	@property
@@ -252,6 +246,7 @@ class PAMixerMenu(object):
 		while self._update_signal:
 			self._update_signal = False
 
+			# Add/remove items
 			obj_new, obj_gone = set(), set(self.item_objs)
 			with self.update_wakeup() as pulse:
 				for obj_t, obj_list_func in\
@@ -275,6 +270,15 @@ class PAMixerMenu(object):
 			if not ordered:
 				self.item_objs.clear()
 				for obj_id, item in it.chain(sinks, streams): self.item_objs[obj_id] = item
+
+			# Make item names unique
+			items_uniq = defaultdict(list)
+			for item in self.item_objs.values(): items_uniq[item.name_base].append(item)
+			for items in items_uniq.values():
+				if len(items) <= 1: continue
+				for item in items:
+					if item.name != item.name_base: continue
+					item.name = '{} #{}'.format(item.name_base, uid_str())
 
 			self.items = list(item for item in self.item_objs.values() if not item.hidden)
 		self._update_lock = False
@@ -354,6 +358,7 @@ class PAMixerMenu(object):
 						except PAMixerInvalidAction as err:
 							log.error( 'Unable to set port for stream {!r}'
 								' (name: {!r}, config section: {}): {}', item, item.name, sec, err )
+					elif k == 'name': item.name_update(v)
 					else:
 						log.debug( 'Unrecognized stream'
 							' parameter (section: {!r}): {!r} (value: {!r})', sec, k, v )
