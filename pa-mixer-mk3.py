@@ -108,6 +108,7 @@ def update_conf_from_file(conf, path_or_file):
 		conf.stream_params[sec] = params
 
 
+class PAMixerReconnect(Exception): pass
 
 class PAMixerMenuItem(object):
 
@@ -189,7 +190,6 @@ class PAMixerMenuItem(object):
 			else: obj_ucs.append(uc)
 		return ''.join(obj_ucs)
 
-
 	@property
 	def muted(self):
 		return bool(self.obj.mute)
@@ -246,7 +246,10 @@ class PAMixerMenu(object):
 		while self._update_signal:
 			self._update_signal = False
 
-			# Add/remove items
+			# Restarts whole thing with new pulse connection
+			if self.connected is False: raise PAMixerReconnect()
+
+			# Add/remove/update items
 			obj_new, obj_gone = set(), set(self.item_objs)
 			with self.update_wakeup() as pulse:
 				for obj_t, obj_list_func in\
@@ -283,33 +286,41 @@ class PAMixerMenu(object):
 			self.items = list(item for item in self.item_objs.values() if not item.hidden)
 		self._update_lock = False
 
+	_update_wakeup_break = None
 	@contextmanager
 	def update_wakeup_poller( self, wakeup_handler,
 			wakeup_pid=None, wakeup_sig=signal.SIGUSR1 ):
 		if wakeup_pid is None: wakeup_pid = os.getpid()
 		signal.signal(wakeup_sig, lambda sig,frm: wakeup_handler())
-		poller_thread = None
 		def ev_cb(ev=None):
 			if not ev:
 				log.debug('pulsectl disconnected')
 				wakeup_handler(disconnected=True)
 			else: log.debug('pulsectl event: {} {}', ev.facility, ev.index)
-			if threading.current_thread() is poller_thread: os.kill(wakeup_pid, wakeup_sig)
+			if not poller_thread: return
+			if poller_thread is threading.current_thread(): os.kill(wakeup_pid, wakeup_sig)
 			else: wakeup_handler()
 		def poller():
-			nonlocal poller_thread
-			poller_thread = threading.current_thread()
 			self.pulse.event_mask_set('all')
 			self.pulse.event_callback_set(ev_cb)
 			while True:
 				with self._pulse_hold: self._pulse_lock.acquire() # ...threads ;(
+				if self._update_wakeup_break:
+					log.error('Stopping poller due to update_wakeup_break')
+					break
 				try: self.pulse.event_listen()
-				except PulseDisconnected: ev_cb()
+				except PulseDisconnected:
+					ev_cb()
+					break
 				finally: self._pulse_lock.release()
-		try: yield poller
+				if not poller_thread: break
+		poller_thread = threading.Thread(target=poller, name='pulsectl', daemon=True)
+		try: yield poller_thread
 		finally:
-			# time.sleep(0.5)
 			self.pulse.event_listen_stop()
+			poller_thread, t = None, poller_thread
+			# if t.is_alive(): t.join()
+			# time.sleep(0.5)
 
 	@contextmanager
 	def update_wakeup(self, loop_interval=0.03):
@@ -323,12 +334,14 @@ class PAMixerMenu(object):
 			else:
 				raise RuntimeError('poll_wakeup() hangs, likely locking issue')
 			try: yield self.pulse
+			except:
+				self._update_wakeup_break = True
+				raise
 			finally: self._pulse_lock.release()
 
 	def update_wakeup_handler(self, disconnected=False):
 		if disconnected: self.connected = False
 		elif self.connected is None: self.connected = True
-		elif not self.connected: sys.exit(0) # XXX: reconnect
 		# XXX: do less than full refresh here
 		self._update_signal = True
 
@@ -393,6 +406,7 @@ class PAMixerMenu(object):
 					return item_prev
 				item_prev = item2
 		return self.item_default()
+
 
 
 class PAMixerUI(object):
@@ -524,7 +538,7 @@ class PAMixerUI(object):
 		c.use_default_colors()
 
 		win = self.c_win_init()
-		self.conf.adjust_step /= 100.0
+		adjust_step = self.conf.adjust_step / 100.0
 
 		while True:
 			# XXX: full refresh on every keypress is a bit excessive
@@ -548,9 +562,8 @@ class PAMixerUI(object):
 			if item_hl:
 				if key_match(key, 'up', 'k', 'p'): self.item_hl = item_hl.get_prev()
 				elif key_match(key, 'down', 'j', 'n'): self.item_hl = item_hl.get_next()
-				elif key_match(key, 'left', 'h', 'b'):
-					item_hl.volume_change(-self.conf.adjust_step)
-				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(self.conf.adjust_step)
+				elif key_match(key, 'left', 'h', 'b'): item_hl.volume_change(-adjust_step)
+				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(adjust_step)
 				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
@@ -619,19 +632,26 @@ def main(args=None):
 	print = ft.partial(print, file=sys.stderr, flush=True) # stdout is used by curses
 	log.debug('Initializing...')
 
-	with Pulse('pa-mixer-mk3') as pulse:
-		menu = PAMixerMenu(pulse, conf, fatal=conf.fatal)
-		wakeup_pid = os.getpid()
+	while True:
+		with Pulse('pa-mixer-mk3', connect=False, threading_lock=True) as pulse:
+			pulse.connect(wait=True)
 
-		with menu.update_wakeup_poller(menu.update_wakeup_handler) as poller:
-			log.debug('Starting pulsectl event poller thread...')
-			threading.Thread(target=poller, name='pulsectl', daemon=True).start()
-			with PAMixerUI(menu) as curses_ui:
-				# Any output will mess-up curses ui, so try to close sys.stderr if possible
-				if not conf.verbose and not conf.debug\
-					and not conf.dump_stream_params: sys.stderr.close()
-				log.debug('Entering curses ui loop...')
-				curses_ui.run()
-				log.debug('Finished')
+			menu = PAMixerMenu(pulse, conf, fatal=conf.fatal)
+			wakeup_pid = os.getpid()
+
+			with menu.update_wakeup_poller(menu.update_wakeup_handler) as poller_thread:
+				log.debug('Starting pulsectl event poller thread...')
+				poller_thread.start()
+
+				with PAMixerUI(menu) as curses_ui:
+					# Any output will mess-up curses ui, so try to close sys.stderr if possible
+					if not conf.verbose and not conf.debug\
+						and not conf.dump_stream_params: sys.stderr.close()
+					log.debug('Entering curses ui loop...')
+					try: curses_ui.run()
+					except PAMixerReconnect: log.debug('Reconnecting to pulse server...')
+					else: break
+
+	log.debug('Finished')
 
 if __name__ == '__main__': sys.exit(main())
