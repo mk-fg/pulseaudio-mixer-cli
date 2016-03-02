@@ -62,6 +62,7 @@ class Conf(object):
 
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
+	reconnect = True
 
 	stream_params = None
 	broken_chars_replace = '_'
@@ -604,6 +605,10 @@ def main(args=None):
 		action='store_true', default=conf.use_media_name,
 		help='Display streams by "media.name" property, if possible.'
 			' Default is to prefer application name and process properties.')
+	parser.add_argument('--no-reconnect',
+		action='store_false', dest='reconnect', default=conf.reconnect,
+		help='Exit when pulseaudio server connection goes down.'
+			' Default is to reconnect endlessly, i.e. run until manual exit.')
 
 	parser.add_argument('-v', '--verbose',
 		action='store_true', default=conf.verbose,
@@ -634,7 +639,7 @@ def main(args=None):
 
 	while True:
 		with Pulse('pa-mixer-mk3', connect=False, threading_lock=True) as pulse:
-			pulse.connect(wait=True)
+			pulse.connect(wait=conf.reconnect)
 
 			menu = PAMixerMenu(pulse, conf, fatal=conf.fatal)
 			wakeup_pid = os.getpid()
@@ -649,7 +654,11 @@ def main(args=None):
 						and not conf.dump_stream_params: sys.stderr.close()
 					log.debug('Entering curses ui loop...')
 					try: curses_ui.run()
-					except PAMixerReconnect: log.debug('Reconnecting to pulse server...')
+					except PAMixerReconnect:
+						if conf.reconnect: log.debug('Reconnecting to pulse server...')
+						else:
+							log.debug('Disconnected from pulse server, exiting...')
+							break
 					else: break
 
 	log.debug('Finished')
