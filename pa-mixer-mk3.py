@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, deque
 from contextlib import contextmanager
 import os, sys, re, time, logging, configparser
 import base64, hashlib, unicodedata
@@ -111,13 +111,26 @@ def update_conf_from_file(conf, path_or_file):
 
 class PAMixerReconnect(Exception): pass
 
+class PAMixerEvent(object):
+	__slots__ = 'obj_type obj_index t'.split()
+	pulsectl_facility_map = dict(sink='sink', sink_input='stream')
+	@classmethod
+	def from_pulsectl_ev(cls, ev):
+		obj_type = cls.pulsectl_facility_map.get(ev.facility)
+		if not obj_type: return
+		return cls(obj_type, ev.index, ev.t)
+	def __init__(self, obj_type, obj_index, t=None):
+		self.obj_type, self.obj_index, self.t = obj_type, obj_index, t
+	def __str__(self): return repr(dict((k, getattr(self, k)) for k in self.__slots__))
+
 class PAMixerMenuItem(object):
 
 	def __init__(self, menu, obj_t, obj_id, obj):
 		self.menu, self.conf = menu, menu.conf
-		self.t, self.uid, self.obj = obj_t, obj_id, obj
-		self.hidden, self.created_ts = False, time.monotonic()
-		self.name_update()
+		self.t, self.uid = obj_t, obj_id
+		self.hidden = self.name_custom = False
+		self.created_ts = time.monotonic()
+		self.update(obj)
 
 		if self.conf.dump_stream_params:
 			from pprint import pprint
@@ -129,8 +142,13 @@ class PAMixerMenuItem(object):
 		return '<{}[{:x}] {}[{}]: {}>'.format(
 			self.__class__.__name__, id(self), self.t, self.uid, self.name )
 
+	def update(self, obj=None):
+		if obj: self.obj = obj
+		if not self.name_custom: self.name_update()
+
 	def name_update(self, name=None):
 		if not name: name = self._get_name() or 'knob'
+		else: self.name_custom = True
 		self.name_base = self.name = name
 
 	def _get_name(self):
@@ -238,14 +256,13 @@ class PAMixerMenu(object):
 	def __init__(self, pulse, conf=None, fatal=False):
 		self.pulse, self.fatal, self.conf = pulse, fatal, conf or Conf()
 		self.items, self.item_objs = list(), OrderedDict()
-		self.connected = None
-		self._update_lock = self._update_signal = False
+		self.connected, self._updates = None, deque()
 		self._pulse_hold, self._pulse_lock = threading.Lock(), threading.Lock()
 
 	def update(self):
-		self._update_lock = self._update_signal = True
-		while self._update_signal:
-			self._update_signal = False
+		while True:
+			try: ev = self._updates.popleft()
+			except: ev = None
 
 			# Restarts whole thing with new pulse connection
 			if self.connected is False: raise PAMixerReconnect()
@@ -253,14 +270,27 @@ class PAMixerMenu(object):
 			# Add/remove/update items
 			obj_new, obj_gone = set(), set(self.item_objs)
 			with self.update_wakeup() as pulse:
-				for obj_t, obj_list_func in\
-						[('sink', pulse.sink_list), ('stream', pulse.sink_input_list)]:
-					for obj in obj_list_func():
+				for obj_t, obj_list_func, obj_info_func in\
+						[ ('sink', pulse.sink_list, pulse.sink_info),
+							('stream', pulse.sink_input_list, pulse.sink_input_info) ]:
+
+					obj_list_full = None
+					if not ev: obj_list_full = obj_list_func()
+					elif ev.obj_type != obj_t: continue
+					elif ev.t == 'remove': obj_list_full = obj_list_func()
+					else: obj_list = [obj_info_func(ev.obj_index)]
+					if obj_list_full is not None: obj_list = obj_list_full
+					else: obj_gone.clear()
+
+					for obj in obj_list:
 						obj_id = '{}-{}'.format(obj_t, obj.index)
 						if obj_id not in self.item_objs:
 							obj_new.add(obj_id)
 							self.item_objs[obj_id] = PAMixerMenuItem(self, obj_t, obj_id, obj)
-						else: obj_gone.remove(obj_id)
+						else:
+							if not obj_list_full: self.item_objs[obj_id].update(obj)
+							obj_gone.discard(obj_id)
+
 			for obj_id in obj_gone: del self.item_objs[obj_id]
 			for obj_id in obj_new: self.apply_stream_params(self.item_objs[obj_id])
 
@@ -285,22 +315,29 @@ class PAMixerMenu(object):
 					item.name = '{} #{}'.format(item.name_base, uid_str())
 
 			self.items = list(item for item in self.item_objs.values() if not item.hidden)
-		self._update_lock = False
+			if not self._updates: break
 
 	_update_wakeup_break = None
 	@contextmanager
 	def update_wakeup_poller( self, wakeup_handler,
 			wakeup_pid=None, wakeup_sig=signal.SIGUSR1 ):
 		if wakeup_pid is None: wakeup_pid = os.getpid()
-		signal.signal(wakeup_sig, lambda sig,frm: wakeup_handler())
-		def ev_cb(ev=None):
-			if not ev:
+		def ev_sig_handler(sig=None, frm=None):
+			while True:
+				try: ev = ev_queue.popleft()
+				except IndexError: break
+				wakeup_handler(ev)
+		def ev_cb(ev_pulse=None):
+			if not ev_pulse:
 				log.debug('pulsectl disconnected')
 				wakeup_handler(disconnected=True)
-			else: log.debug('pulsectl event: {} {}', ev.facility, ev.index)
+			else: log.debug('pulsectl event: {} {} {}', ev_pulse.facility, ev_pulse.t, ev_pulse.index)
 			if not poller_thread: return
+			ev = PAMixerEvent.from_pulsectl_ev(ev_pulse)
+			if not ev: return
+			ev_queue.append(ev)
 			if poller_thread is threading.current_thread(): os.kill(wakeup_pid, wakeup_sig)
-			else: wakeup_handler()
+			else: ev_sig_handler()
 		def poller():
 			self.pulse.event_mask_set('all')
 			self.pulse.event_callback_set(ev_cb)
@@ -315,6 +352,8 @@ class PAMixerMenu(object):
 					break
 				finally: self._pulse_lock.release()
 				if not poller_thread: break
+		ev_queue = deque()
+		signal.signal(wakeup_sig, ev_sig_handler)
 		poller_thread = threading.Thread(target=poller, name='pulsectl', daemon=True)
 		try: yield poller_thread
 		finally:
@@ -340,11 +379,10 @@ class PAMixerMenu(object):
 				raise
 			finally: self._pulse_lock.release()
 
-	def update_wakeup_handler(self, disconnected=False):
+	def update_wakeup_handler(self, ev=None, disconnected=False):
 		if disconnected: self.connected = False
 		elif self.connected is None: self.connected = True
-		# XXX: do less than full refresh here
-		self._update_signal = True
+		self._updates.append(ev)
 
 	def apply_stream_params(self, item):
 		for sec, checks in (self.conf.stream_params or dict()).items():
@@ -542,8 +580,6 @@ class PAMixerUI(object):
 		adjust_step = self.conf.adjust_step / 100.0
 
 		while True:
-			# XXX: full refresh on every keypress is a bit excessive
-			# XXX: pulsectl error handling here?
 			items, item_hl = self.menu.item_list, self.item_hl
 			if item_hl is None: item_hl = self.item_hl = self.menu.item_default()
 			if item_hl not in items: item_hl = self.menu.item_default()
