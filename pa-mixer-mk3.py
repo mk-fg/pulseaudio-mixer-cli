@@ -7,7 +7,7 @@ import os, sys, re, time, logging, configparser
 import base64, hashlib, unicodedata
 import signal, threading
 
-from pulsectl import Pulse, PulseLoopStop, PulseDisconnected
+from pulsectl import Pulse, PulseLoopStop, PulseDisconnected, PulseIndexError
 
 
 class LogMessage(object):
@@ -269,26 +269,30 @@ class PAMixerMenu(object):
 
 			# Add/remove/update items
 			obj_new, obj_gone = set(), set(self.item_objs)
+			obj_id_func = lambda t,index: '{}-{}'.format(t, index)
 			with self.update_wakeup() as pulse:
 				for obj_t, obj_list_func, obj_info_func in\
 						[ ('sink', pulse.sink_list, pulse.sink_info),
 							('stream', pulse.sink_input_list, pulse.sink_input_info) ]:
 
-					obj_list_full = None
+					obj_list_full = obj_list = None
 					if not ev: obj_list_full = obj_list_func()
 					elif ev.obj_type != obj_t: continue
-					elif ev.t == 'remove': obj_list_full = obj_list_func()
-					else: obj_list = [obj_info_func(ev.obj_index)]
-					if obj_list_full is not None: obj_list = obj_list_full
-					else: obj_gone.clear()
+					elif ev.t == 'remove':
+						obj_gone.clear()
+						obj_gone.add(obj_id_func(obj_t, ev.obj_index))
+					else:
+						try: obj_list = [obj_info_func(ev.obj_index)]
+						except PulseIndexError: continue # likely already gone
+					if obj_list_full is None: obj_gone.clear()
 
-					for obj in obj_list:
-						obj_id = '{}-{}'.format(obj_t, obj.index)
+					for obj in obj_list or obj_list_full or list():
+						obj_id = obj_id_func(obj_t, obj.index)
 						if obj_id not in self.item_objs:
 							obj_new.add(obj_id)
 							self.item_objs[obj_id] = PAMixerMenuItem(self, obj_t, obj_id, obj)
 						else:
-							if not obj_list_full: self.item_objs[obj_id].update(obj)
+							if obj_list_full is None: self.item_objs[obj_id].update(obj)
 							obj_gone.discard(obj_id)
 
 			for obj_id in obj_gone: del self.item_objs[obj_id]
