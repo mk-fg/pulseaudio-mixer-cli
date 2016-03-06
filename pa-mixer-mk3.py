@@ -270,7 +270,7 @@ class PAMixerMenu(object):
 			# Add/remove/update items
 			obj_new, obj_gone = set(), set(self.item_objs)
 			obj_id_func = lambda t,index: '{}-{}'.format(t, index)
-			with self.update_wakeup() as pulse:
+			with self.update_wakeup(trap_errors=False) as pulse:
 				for obj_t, obj_list_func, obj_info_func in\
 						[ ('sink', pulse.sink_list, pulse.sink_info),
 							('stream', pulse.sink_input_list, pulse.sink_input_info) ]:
@@ -296,7 +296,13 @@ class PAMixerMenu(object):
 							obj_gone.discard(obj_id)
 
 			for obj_id in obj_gone: del self.item_objs[obj_id]
-			for obj_id in obj_new: self.apply_stream_params(self.item_objs[obj_id])
+			for obj_id in obj_new:
+				item = self.item_objs[obj_id]
+				try: self.apply_stream_params(item)
+				except Exception as err:
+					log.exception(
+						'Failed to apply stream parameters for {}, skipping: <{}> {}',
+						item, err.__class__.__name__, err )
 
 			# Sort sinks to be always on top
 			sinks, streams, ordered = list(), list(), True
@@ -367,7 +373,7 @@ class PAMixerMenu(object):
 			# time.sleep(0.5)
 
 	@contextmanager
-	def update_wakeup(self, loop_interval=0.03):
+	def update_wakeup(self, trap_errors=True, loop_interval=0.03):
 		'Anything pulse-related MUST be done in this context.'
 		with self._pulse_hold:
 			for n in range(int(5.0 / loop_interval)):
@@ -378,9 +384,11 @@ class PAMixerMenu(object):
 			else:
 				raise RuntimeError('poll_wakeup() hangs, likely locking issue')
 			try: yield self.pulse
-			except:
-				self._update_wakeup_break = True
-				raise
+			except Exception as err:
+				if not trap_errors:
+					self._update_wakeup_break = True
+					raise
+				log.exception('Pulse interaction failure, skipping: <{}> {}', err.__class__.__name__, err)
 			finally: self._pulse_lock.release()
 
 	def update_wakeup_handler(self, ev=None, disconnected=False):
