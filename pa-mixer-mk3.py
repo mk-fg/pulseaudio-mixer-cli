@@ -665,8 +665,6 @@ def main(args=None):
 	parser.add_argument('--dump-stream-params',
 		action='store_true', help='Dump all parameters for each stream to stderr.')
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
-	parser.add_argument('--debug-pipes', action='store_true',
-		help='Also logs chatter between parent/child pids. Very noisy, only useful with --debug.')
 	parser.add_argument('--fatal', action='store_true',
 		help='Dont try too hard to recover from errors. For debugging purposes only.')
 
