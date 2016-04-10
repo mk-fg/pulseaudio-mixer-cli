@@ -617,7 +617,7 @@ class PAMixerUI(object):
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
 
-			if key_match(key, 'resize', '\f'):
+			if key_match(key, 'resize'):
 				if self.conf.overkill_redraw:
 					c.endwin()
 					stdscr.refresh()
