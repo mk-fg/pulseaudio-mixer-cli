@@ -392,7 +392,9 @@ class PAMixerMenu(object):
 			finally: self._pulse_lock.release()
 
 	def update_wakeup_handler(self, ev=None, disconnected=False):
-		if disconnected: self.connected = False
+		if disconnected:
+			self.connected = False
+			signal.pthread_kill(threading.main_thread().ident, signal.SIGWINCH)
 		elif self.connected is None: self.connected = True
 		self._updates.append(ev)
 
