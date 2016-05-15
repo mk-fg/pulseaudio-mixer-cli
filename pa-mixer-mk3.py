@@ -5,7 +5,7 @@ from collections import OrderedDict, defaultdict, deque
 from contextlib import contextmanager
 import os, sys, re, time, logging, configparser
 import base64, hashlib, unicodedata
-import signal, threading
+import signal, threading, select, fcntl, errno
 
 from pulsectl import Pulse, PulseLoopStop, PulseDisconnected, PulseIndexError
 
@@ -392,7 +392,9 @@ class PAMixerMenu(object):
 			finally: self._pulse_lock.release()
 
 	def update_wakeup_handler(self, ev=None, disconnected=False):
-		if disconnected: self.connected = False
+		if disconnected:
+			self.connected = False
+			# signal.pthread_kill(threading.main_thread().ident, signal.SIGWINCH)
 		elif self.connected is None: self.connected = True
 		self._updates.append(ev)
 
@@ -588,6 +590,17 @@ class PAMixerUI(object):
 		c.curs_set(0)
 		c.use_default_colors()
 
+		stdscr.nodelay(True)
+		poller_wakeup, sig = os.pipe()
+		for fd in poller_wakeup, sig:
+			fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
+		signal.set_wakeup_fd(sig)
+		poller = select.epoll()
+		poller.register(sys.stdin, select.EPOLLIN)
+		poller.register(poller_wakeup, select.EPOLLIN)
+		# XXX: see https://bugs.python.org/issue3949 wrt SIGWINCH/curses
+		# signal.signal(signal.SIGWINCH, lambda sig, frm: pass)
+
 		win = self.c_win_init()
 		adjust_step = self.conf.adjust_step / 100.0
 
@@ -599,11 +612,26 @@ class PAMixerUI(object):
 
 			key = None
 			while True:
-				try: key = win.getch()
-				except KeyboardInterrupt: key = self.c_key('q')
+				try:
+					key = win.getch()
+					if key in [None, -1]:
+						evs = poller.poll()
+						key = win.getch()
 				except c.error: break
+				except IOError as err:
+					if err.errno != errno.EINTR: raise
+					evs = None
+				for fd, ev in evs:
+					if fd == poller_wakeup:
+						try: sig = ord(os.read(poller_wakeup, 1) or '\0')
+						except IOError as err:
+							if err.errno != errno.EAGAIN: raise
+						else:
+							if sig == signal.SIGWINCH: key = c.KEY_RESIZE # XXX: chain curses handler
+				# XXX: handling of SIGINT and such
+
 				try: key_name = c.keyname(key)
-				except ValueError: key_name = 'unknown' # e.g. "-1"
+				except ValueError: key_name = 'unknown'
 				break
 			if key is None: continue
 			log.debug('Keypress event: {} ({!r})', key, key_name)
