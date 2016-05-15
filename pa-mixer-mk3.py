@@ -343,7 +343,7 @@ class PAMixerMenu(object):
 				wakeup_handler(disconnected=True)
 			else: log.debug('pulsectl event: {} {} {}', ev_pulse.facility, ev_pulse.t, ev_pulse.index)
 			if not poller_thread: return
-			ev = PAMixerEvent.from_pulsectl_ev(ev_pulse)
+			ev = ev_pulse and PAMixerEvent.from_pulsectl_ev(ev_pulse)
 			if not ev: return
 			ev_queue.append(ev)
 			if poller_thread is threading.current_thread(): os.kill(wakeup_pid, wakeup_sig)
