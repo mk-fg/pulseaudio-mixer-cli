@@ -268,34 +268,31 @@ class PAMixerMenu(object):
 			if self.connected is False: raise PAMixerReconnect()
 
 			# Add/remove/update items
-			obj_new, obj_gone = set(), set(self.item_objs)
+			obj_new, obj_gone = set(), set()
 			obj_id_func = lambda t,index: '{}-{}'.format(t, index)
+			if not ev: obj_gone.update(self.item_objs) # i.e. replace whole list
 			with self.update_wakeup(trap_errors=False) as pulse:
 				for obj_t, obj_list_func, obj_info_func in\
 						[ ('sink', pulse.sink_list, pulse.sink_info),
 							('stream', pulse.sink_input_list, pulse.sink_input_info) ]:
 
-					obj_list_full = obj_list = None
+					obj_list_full = obj_list = None # "replace all" vs "new/update X"
 					if not ev: obj_list_full = obj_list_func()
 					elif ev.obj_type != obj_t: continue
-					elif ev.t == 'remove':
-						obj_gone.clear()
-						obj_gone.add(obj_id_func(obj_t, ev.obj_index))
+					elif ev.t == 'remove': obj_gone.add(obj_id_func(obj_t, ev.obj_index))
 					else:
 						try: obj_list = [obj_info_func(ev.obj_index)]
 						except PulseIndexError: continue # likely already gone
-					if obj_list_full is None: obj_gone.clear()
 
-					for obj in obj_list or obj_list_full or list():
+					for obj in obj_list or obj_list_full or list(): # new/updated
 						obj_id = obj_id_func(obj_t, obj.index)
 						if obj_id not in self.item_objs:
 							obj_new.add(obj_id)
 							self.item_objs[obj_id] = PAMixerMenuItem(self, obj_t, obj_id, obj)
-						else:
-							if obj_list_full is None: self.item_objs[obj_id].update(obj)
-							obj_gone.discard(obj_id)
+						elif obj_list_full is None: self.item_objs[obj_id].update(obj)
+						obj_gone.discard(obj_id)
 
-			for obj_id in obj_gone: del self.item_objs[obj_id]
+			for obj_id in obj_gone: self.item_objs.pop(obj_id, None)
 			for obj_id in obj_new:
 				item = self.item_objs[obj_id]
 				try: self.apply_stream_params(item)
@@ -349,7 +346,7 @@ class PAMixerMenu(object):
 			if poller_thread is threading.current_thread(): os.kill(wakeup_pid, wakeup_sig)
 			else: ev_sig_handler()
 		def poller():
-			self.pulse.event_mask_set('all')
+			self.pulse.event_mask_set('sink', 'sink_input')
 			self.pulse.event_callback_set(ev_cb)
 			while True:
 				with self._pulse_hold: self._pulse_lock.acquire() # ...threads ;(
@@ -698,8 +695,7 @@ def main(args=None):
 
 				with PAMixerUI(menu) as curses_ui:
 					# Any output will mess-up curses ui, so try to close sys.stderr if possible
-					if not conf.verbose and not conf.debug\
-							and not conf.dump_stream_params:
+					if not conf.verbose and not conf.debug and not conf.dump_stream_params:
 						sys.stderr.flush()
 						fd = os.open(os.devnull, os.O_WRONLY)
 						os.dup2(fd, sys.stderr.fileno())
