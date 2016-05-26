@@ -81,7 +81,8 @@ class Conf(object):
 def update_conf_from_file(conf, path_or_file):
 	if isinstance(path_or_file, str): path_or_file = open(path_or_file)
 	with path_or_file as src:
-		config = configparser.RawConfigParser(allow_no_value=True)
+		config = configparser.RawConfigParser(
+			allow_no_value=True, inline_comment_prefixes=(';',) )
 		config.readfp(src)
 
 	for k in dir(conf):
