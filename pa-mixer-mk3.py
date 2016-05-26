@@ -700,9 +700,9 @@ def main(args=None):
 					# Any output will mess-up curses ui, so try to close sys.stderr if possible
 					if not conf.verbose and not conf.debug\
 							and not conf.dump_stream_params:
-						fd, fd2 = os.open(b'/dev/null', os.O_WRONLY), sys.stderr.fileno()
-						sys.stderr.close()
-						os.dup2(fd, fd2)
+						sys.stderr.flush()
+						fd = os.open(b'/dev/null', os.O_WRONLY)
+						os.dup2(fd, sys.stderr.fileno())
 						os.close(fd)
 					log.debug('Entering curses ui loop...')
 					try: curses_ui.run()
