@@ -701,7 +701,7 @@ def main(args=None):
 					if not conf.verbose and not conf.debug\
 							and not conf.dump_stream_params:
 						sys.stderr.flush()
-						fd = os.open(b'/dev/null', os.O_WRONLY)
+						fd = os.open(os.devnull, os.O_WRONLY)
 						os.dup2(fd, sys.stderr.fileno())
 						os.close(fd)
 					log.debug('Entering curses ui loop...')
