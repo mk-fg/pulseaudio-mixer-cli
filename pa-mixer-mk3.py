@@ -23,16 +23,6 @@ class LogStyleAdapter(logging.LoggerAdapter):
 		msg, kws = self.process(msg, kws)
 		self.logger._log(level, LogMessage(msg, args, kws), (), log_kws)
 
-class LogPrefixAdapter(LogStyleAdapter):
-	def __init__(self, logger, prefix, extra=None):
-		if isinstance(logger, str): logger = get_logger(logger)
-		if isinstance(logger, logging.LoggerAdapter): logger = logger.logger
-		super(LogPrefixAdapter, self).__init__(logger, extra or {})
-		self.prefix = prefix
-	def process(self, msg, kws):
-		super(LogPrefixAdapter, self).process(msg, kws)
-		return '[{}] {}'.format(self.prefix, msg), kws
-
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
 
@@ -98,6 +88,7 @@ def update_conf_from_file(conf, path_or_file):
 			except configparser.Error: pass
 
 	conf.stream_params = OrderedDict(conf.stream_params or dict())
+	conf.stream_params_reapply = list() # ones to re-apply on every event
 	for sec in config.sections():
 		if not re.search(r'^stream\b.', sec): continue
 		params = list()
@@ -107,6 +98,8 @@ def update_conf_from_file(conf, path_or_file):
 				v = re.compile(r'^{}$'.format(re.escape(v)) if match.group(1) == 'equals' else v)
 				params.append(('match', match.group(2), v))
 			else: params.append(('set', k, v))
+			if k == 'reapply' and conf.parse_bool(v):
+				conf.stream_params_reapply.append(sec)
 		conf.stream_params[sec] = params
 
 
@@ -294,9 +287,8 @@ class PAMixerMenu(object):
 						obj_gone.discard(obj_id)
 
 			for obj_id in obj_gone: self.item_objs.pop(obj_id, None)
-			for obj_id in obj_new:
-				item = self.item_objs[obj_id]
-				try: self.apply_stream_params(item)
+			for obj_id, item in self.item_objs.items():
+				try: self.apply_stream_params(item, reapply=obj_id not in obj_new)
 				except Exception as err:
 					log.exception(
 						'Failed to apply stream parameters for {}, skipping: <{}> {}',
@@ -396,8 +388,11 @@ class PAMixerMenu(object):
 		elif self.connected is None: self.connected = True
 		self._updates.append(ev)
 
-	def apply_stream_params(self, item):
-		for sec, checks in (self.conf.stream_params or dict()).items():
+	def apply_stream_params(self, item, reapply=False):
+		if reapply and not self.conf.stream_params_reapply: return
+		rulesets = (self.conf.stream_params or dict()).items() if not reapply else\
+			((k, self.conf.stream_params[k]) for k in self.conf.stream_params_reapply)
+		for sec, checks in rulesets:
 			match, params = True, OrderedDict()
 			for t, k, v in checks:
 				if t == 'match':
@@ -423,6 +418,7 @@ class PAMixerMenu(object):
 							log.error( 'Unable to set port for stream {!r}'
 								' (name: {!r}, config section: {}): {}', item, item.name, sec, err )
 					elif k == 'name': item.name_update(v)
+					elif k == 'reapply': pass
 					else:
 						log.debug( 'Unrecognized stream'
 							' parameter (section: {!r}): {!r} (value: {!r})', sec, k, v )
