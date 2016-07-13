@@ -103,7 +103,8 @@ Supposed to mimic ones in alsamixer and be somewhat intuitive, hardcoded.
 
 ### Config file
 
-Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg".
+Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg"
+(or whatever is specified via --conf option).
 See [RawConfigParser docs](http://docs.python.org/2/library/configparser.html)
 for more details on format of that file.
 

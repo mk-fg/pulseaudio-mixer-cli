@@ -68,7 +68,16 @@ class Conf(object):
 		except KeyError: raise ValueError(val)
 
 
-def update_conf_from_file(conf, path_or_file):
+def conf_read(path=None, base=None):
+	conf, conf_file = base or Conf(),\
+		os.path.expanduser(path or conf_read.path_default)
+	try: conf_file = open(conf_file)
+	except (OSError, IOError) as err: pass
+	else: conf_update_from_file(conf, conf_file)
+	return conf
+conf_read.path_default = '~/.pulseaudio-mixer-cli.cfg'
+
+def conf_update_from_file(conf, path_or_file):
 	if isinstance(path_or_file, str): path_or_file = open(path_or_file)
 	with path_or_file as src:
 		config = configparser.RawConfigParser(
@@ -630,20 +639,21 @@ class PAMixerUI(object):
 
 
 def main(args=None):
-	conf = Conf()
-	conf_file = os.path.expanduser('~/.pulseaudio-mixer-cli.cfg')
-	try: conf_file = open(conf_file)
-	except (OSError, IOError) as err: pass
-	else: update_conf_from_file(conf, conf_file)
+	conf = conf_read()
 
 	import argparse
 	parser = argparse.ArgumentParser(description='Command-line PulseAudio mixer tool.')
 
+	parser.add_argument('-c', '--conf',
+		action='store', metavar='path', default=conf_read.path_default,
+		help='Path to configuration file to use instead'
+			' of the default one (%(default)s), can be missing or empty.')
+
 	parser.add_argument('-a', '--adjust-step',
-		action='store', type=int, metavar='step', default=conf.adjust_step,
+		type=int, metavar='step', default=conf.adjust_step,
 		help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
 	parser.add_argument('-l', '--max-level',
-		action='store', type=float, metavar='volume', default=conf.max_volume,
+		type=float, metavar='volume', default=conf.max_volume,
 		help='Relative volume level to treat as max (default: %(default)s).')
 	parser.add_argument('-n', '--use-media-name',
 		action='store_true', default=conf.use_media_name,
@@ -667,6 +677,7 @@ def main(args=None):
 	args = sys.argv[1:] if args is None else args
 	opts = parser.parse_args(args)
 
+	if opts.conf: conf = conf_read(opts.conf)
 	for k,v in vars(opts).items(): setattr(conf, k, v)
 	del opts
 
