@@ -201,3 +201,9 @@ Other similar projects
 - pavucontrol that comes with pulse has good GUI (for GNOME/X11 and such).
 
 Not an exhaustive list by any means.
+
+
+TODO
+----
+
+- Use/expose module-stream-restore extension API.
