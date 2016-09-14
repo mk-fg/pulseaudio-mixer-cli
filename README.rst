@@ -32,7 +32,7 @@ Installation
 ------------
 
 Copy one of the scripts (`pa-mixer-mk3.py`_ is the latest one) to wherever is
-convenient (~/bin or /usr/local/bin comes to mind), do a "chmod +x" on it, run.
+convenient (~/bin or /usr/local/bin comes to mind), do a ``chmod +x`` on it, run.
 
 There are three scripts:
 
@@ -42,8 +42,7 @@ There are three scripts:
 - `pa-mixer-mk2.py`_ - rewrite, with separate dbus/glib subprocess and more
   features, also Python-2.7.
 
-- `pa-mixer-mk3.py`_ - same as mk2, but for Python-3.x and uses
-  [pulsectl module](https://github.com/mk-fg/python-pulse-control)
+- `pa-mixer-mk3.py`_ - same as mk2, but for Python-3.x and uses pulsectl_ module
   (libpulse wrapper) to communicate with pulseaudio daemon (from a thread)
   instead of dbus.
 
@@ -64,9 +63,9 @@ Requirements (pa-mixer-mk3.py)
 - pulsectl_ python module
 - PulseAudio 1.0+
 
-.. _pulseaudio-mixer-cli.py: blob/master/pulseaudio-mixer-cli.py
-.. _pa-mixer-mk2.py: blob/master/pa-mixer-mk2.py
-.. _pa-mixer-mk3.py: blob/master/pa-mixer-mk3.py
+.. _pulseaudio-mixer-cli.py: pulseaudio-mixer-cli.py
+.. _pa-mixer-mk2.py: pa-mixer-mk2.py
+.. _pa-mixer-mk3.py: pa-mixer-mk3.py
 .. _pulsectl: https://github.com/mk-fg/python-pulse-control
 
 
@@ -118,6 +117,7 @@ Config file
 
 Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg"
 (or whatever is specified via --conf option).
+
 See `RawConfigParser docs <http://docs.python.org/2/library/configparser.html>`_
 for more details on format of that file.
 
@@ -161,8 +161,8 @@ See more info on stream matching and parameters in `pa-mixer.example.cfg`_.
 
 .. _pa-mixer.example.cfg: pa-mixer.example.cfg
 
-Other misc usage hints
-``````````````````````
+Misc usage hints
+````````````````
 
 - Running the thing in a drop-down terminal ("quake console" like guake,
   yakuake, tilda, terra, yeahconsole) makes it into something like a keyboard
