@@ -464,6 +464,12 @@ class PAMixerStreams(object):
 		return self.item_default()
 
 
+class PAMixerAttic(object):
+
+	def __init__(self, pulse, conf=None, fatal=False):
+		self.pulse, self.fatal, self.conf = pulse, fatal, conf or Conf()
+
+
 
 class PAMixerUI(object):
 
@@ -472,9 +478,12 @@ class PAMixerUI(object):
 	bar_caps_func = staticmethod(lambda bar='': ' [ ' + bar + ' ]')
 	border = 1
 	name_cut_funcs = dict(left=lambda n,c: n[max(0, len(n) - c):], right=lambda n,c: n[:c])
+	mode_opts = {'streams', 'attic'}
+	mode_desc = dict(streams='active sinks/streams', attic='stored stream volumes')
 
-	def __init__(self, streams):
-		self.streams, self.conf = streams, streams.conf
+	def __init__(self, streams, attic, conf=None):
+		self.streams, self.attic, self.conf = streams, attic, conf or Conf()
+		self.mode = 'streams'
 
 	def __enter__(self):
 		self.c = None
@@ -501,15 +510,25 @@ class PAMixerUI(object):
 		nlines, ncols = max(1, size[0] - 2 * self.border), max(1, size[1] - 2 * self.border)
 		return nlines, ncols, min(self.border, size[0]), min(self.border, size[1])
 
+	def c_win_add(self, win, *args, test=False):
+		try: win.addstr(*args)
+		except self.c.error as err:
+			if not test: log.debug('curses addstr() returned error ({}), args: {}', err, args)
+		else: return True
+
 	def c_win_draw(self, win, items, item_hl):
 		win.erase()
 		if not items: return
 
 		win_rows, win_len, pad_x, pad_y = self.c_win_size(win)
-		if win_len <= 1: return # nothing fits, don't even bother
+		draw_controls = self.attic and win_rows > 5
+		win_rows_reserved = 0 if draw_controls else 1
+		if win_len <= 3: return # nothing fits, don't even bother
+		addstr = ft.partial(self.c_win_add, win)
 
-		# Fit stuff vertically
-		if win_rows < len(items) + 1: # pick/display items near highlighted one
+		## Fit stuff vertically
+		if win_rows < len(items) + win_rows_reserved:
+			# Pick/display items near highlighted one
 			pos, offset = items.index(item_hl), 1
 			items, items_fit = dict(enumerate(items)), {pos: items[pos]}
 			while True:
@@ -517,14 +536,16 @@ class PAMixerUI(object):
 				if not ps: break
 				for p in ps:
 					items_fit[p] = items[p]
-					if win_rows <= len(items_fit) + 1: break
+					if win_rows <= len(items_fit) + win_rows_reserved: break
 				else:
 					offset += 1
 					continue
 				break
-			items = map(op.itemgetter(1), sorted(items_fit.items(), key=op.itemgetter(0)))
+			assert not items_fit or pos in items_fit
+			items = list(map(op.itemgetter(1), sorted(items_fit.items(), key=op.itemgetter(0))))
+			print(items)
 
-		# Fit stuff horizontally
+		## Fit stuff horizontally
 		mute_button_len, level_len = 2, 5
 		item_len_max = max(len(item.name) for item in items)
 		if self.conf.name_show_level: item_len_max += level_len
@@ -537,9 +558,11 @@ class PAMixerUI(object):
 			if bar_len <= 0: item_len_max = win_len # just draw labels
 			if item_len_max < self.item_len_min: item_len_max = max(len(item.name) for item in items)
 
+		## Output stuff
 		for row, item in enumerate(items):
-			if row >= win_rows - 1: break # not sure why bottom window row seem to be unusable
+			if row >= win_rows: break
 			row += pad_y
+			if not addstr(row, 0, ' ', test=True): break
 
 			attrs = self.c.A_REVERSE if item is item_hl else self.c.A_NORMAL
 			name_len = item_len_max - bool(self.conf.name_show_level) * level_len
@@ -552,18 +575,25 @@ class PAMixerUI(object):
 				else: level = '{:>2d}'.format(level)
 				name = '[{}] {}'.format(level, name)
 
-			win.addstr(row, 0, ' ' * pad_x)
-			win.addstr(row, pad_x, name, attrs)
+			addstr(row, 0, ' ' * pad_x)
+			addstr(row, pad_x, name, attrs)
 			item_name_end = item_len_max + pad_x
 			if win_len > item_name_end + mute_button_len:
 				if item.muted: mute_button = ' M'
 				else: mute_button = ' -'
-				win.addstr(row, item_name_end, mute_button)
+				addstr(row, item_name_end, mute_button)
 
 				if bar_len > 0:
 					bar_fill = int(round(item.volume * bar_len))
 					bar = self.bar_caps_func('#' * bar_fill + '-' * (bar_len - bar_fill))
-					win.addstr(row, item_name_end + mute_button_len, bar)
+					addstr(row, item_name_end + mute_button_len, bar)
+
+		if draw_controls:
+			addstr(win_rows, pad_x, ' ')
+			addstr('x', self.c.A_REVERSE)
+			mode_desc = self.mode_desc[self.mode_switch(display=True)]
+			y, x = win.getyx()
+			addstr(' - show {}'.format(mode_desc)[:win_len-x])
 
 	def c_key(self, k):
 		if len(k) == 1: return ord(k)
@@ -572,12 +602,20 @@ class PAMixerUI(object):
 
 	_item_hl = _item_hl_ts = None
 
+	def mode_switch(self, display=False):
+		mode = self.mode_opts.difference([self.mode]).pop()
+		if not display and getattr(self, mode, None): self.mode = mode
+		return mode
+
+	@property
+	def menu(self): return getattr(self, self.mode)
+
 	@property
 	def item_hl(self):
 		if self._item_hl and self.conf.focus_new_items:
 			ts = self._item_hl_ts
 			if ts: ts += self.conf.focus_new_items_delay or 0
-			item = self.streams.item_newer(ts)
+			item = self.menu.item_newer(ts)
 			if item: self._item_hl = item
 		return self._item_hl
 
@@ -597,9 +635,9 @@ class PAMixerUI(object):
 		adjust_step = self.conf.adjust_step / 100.0
 
 		while True:
-			items, item_hl = self.streams.item_list, self.item_hl
-			if item_hl is None: item_hl = self.item_hl = self.streams.item_default()
-			if item_hl not in items: item_hl = self.streams.item_default()
+			items, item_hl = self.menu.item_list, self.item_hl
+			if item_hl is None: item_hl = self.item_hl = self.menu.item_default()
+			if item_hl not in items: item_hl = self.menu.item_default()
 			self.c_win_draw(win, items, item_hl)
 
 			key = None
@@ -619,6 +657,7 @@ class PAMixerUI(object):
 				elif key_match(key, 'left', 'h', 'b'): item_hl.volume_change(-adjust_step)
 				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(adjust_step)
 				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
+				elif key_match(key, 'x'): self.mode_switch()
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
 
@@ -694,14 +733,16 @@ def main(args=None):
 		with Pulse('pa-mixer-mk3', connect=False, threading_lock=True) as pulse:
 			pulse.connect(wait=conf.reconnect)
 
-			streams = PAMixerStreams(pulse, conf, fatal=conf.fatal)
 			wakeup_pid = os.getpid()
+			attic, streams = None, PAMixerStreams(pulse, conf, fatal=conf.fatal)
+			# if pulse.stream_restore_test() is not None:
+			# 	attic = PAMixerAttic(pulse, conf, fatal=conf.fatal)
 
 			with streams.update_wakeup_poller(streams.update_wakeup_handler) as poller_thread:
 				log.debug('Starting pulsectl event poller thread...')
 				poller_thread.start()
 
-				with PAMixerUI(streams) as curses_ui:
+				with PAMixerUI(streams, attic, conf) as curses_ui:
 					# Any output will mess-up curses ui, so try to close sys.stderr if possible
 					if not conf.verbose and not conf.debug and not conf.dump_stream_params:
 						sys.stderr.flush()
