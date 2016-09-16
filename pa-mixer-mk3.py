@@ -126,10 +126,10 @@ class PAMixerEvent(object):
 		self.obj_type, self.obj_index, self.t = obj_type, obj_index, t
 	def __str__(self): return repr(dict((k, getattr(self, k)) for k in self.__slots__))
 
-class PAMixerMenuItem(object):
+class PAMixerStreamsItem(object):
 
-	def __init__(self, menu, obj_t, obj_id, obj):
-		self.menu, self.conf = menu, menu.conf
+	def __init__(self, streams, obj_t, obj_id, obj):
+		self.streams, self.conf = streams, streams.conf
 		self.t, self.uid = obj_t, obj_id
 		self.hidden = self.name_custom = False
 		self.created_ts = time.monotonic()
@@ -157,7 +157,7 @@ class PAMixerMenuItem(object):
 	def _get_name(self):
 		try: return self._get_name_descriptive()
 		except Exception as err:
-			if self.menu.fatal: raise
+			if self.streams.fatal: raise
 			log.info('Failed to get descriptive name for {!r} ({}): {}', self.t, self.uid, err)
 		return self.t
 
@@ -186,7 +186,7 @@ class PAMixerMenuItem(object):
 					except KeyError: name = props['device.description']
 				ext = '({device.profile.name}@{alsa.driver_name})'
 
-		else: raise KeyError('Unknown menu-item type (for naming): {}'.format(self.t))
+		else: raise KeyError('Unknown streams-item type (for naming): {}'.format(self.t))
 
 		if ext:
 			try:
@@ -218,7 +218,7 @@ class PAMixerMenuItem(object):
 	@muted.setter
 	def muted(self, val):
 		self.obj.mute = int(val)
-		with self.menu.update_wakeup() as pulse: pulse.mute(self.obj, self.obj.mute)
+		with self.streams.update_wakeup() as pulse: pulse.mute(self.obj, self.obj.mute)
 
 	@property
 	def volume(self):
@@ -229,7 +229,7 @@ class PAMixerMenuItem(object):
 	def volume(self, val):
 		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
 		log.debug('Setting volume: {} (pulse: {}) for {}', val, val_pulse, self)
-		with self.menu.update_wakeup() as pulse: pulse.volume_set_all_chans(self.obj, val_pulse)
+		with self.streams.update_wakeup() as pulse: pulse.volume_set_all_chans(self.obj, val_pulse)
 
 	@property
 	def port(self):
@@ -240,7 +240,7 @@ class PAMixerMenuItem(object):
 		if self.t != 'sink':
 			log.warning( 'Setting ports is only'
 				' available for {!r}-type streams, not {!r}-type', 'sink', self.t )
-		with self.menu.update_wakeup() as pulse: pulse.port_set(self.obj, name)
+		with self.streams.update_wakeup() as pulse: pulse.port_set(self.obj, name)
 
 
 	def muted_toggle(self): self.muted = not self.muted
@@ -248,11 +248,11 @@ class PAMixerMenuItem(object):
 		log.debug('Volume update: {} -> {} [{}]', self.volume, self.volume + delta, delta)
 		self.volume += delta
 
-	def get_next(self): return self.menu.item_after(self)
-	def get_prev(self): return self.menu.item_before(self)
+	def get_next(self): return self.streams.item_after(self)
+	def get_prev(self): return self.streams.item_before(self)
 
 
-class PAMixerMenu(object):
+class PAMixerStreams(object):
 
 	focus_policies = dict(first=op.itemgetter(0), last=op.itemgetter(-1))
 
@@ -291,7 +291,7 @@ class PAMixerMenu(object):
 						obj_id = obj_id_func(obj_t, obj.index)
 						if obj_id not in self.item_objs:
 							obj_new.add(obj_id)
-							self.item_objs[obj_id] = PAMixerMenuItem(self, obj_t, obj_id, obj)
+							self.item_objs[obj_id] = PAMixerStreamsItem(self, obj_t, obj_id, obj)
 						elif obj_list_full is None: self.item_objs[obj_id].update(obj)
 						obj_gone.discard(obj_id)
 
@@ -473,8 +473,8 @@ class PAMixerUI(object):
 	border = 1
 	name_cut_funcs = dict(left=lambda n,c: n[max(0, len(n) - c):], right=lambda n,c: n[:c])
 
-	def __init__(self, menu):
-		self.menu, self.conf = menu, menu.conf
+	def __init__(self, streams):
+		self.streams, self.conf = streams, streams.conf
 
 	def __enter__(self):
 		self.c = None
@@ -506,7 +506,7 @@ class PAMixerUI(object):
 		if not items: return
 
 		win_rows, win_len, pad_x, pad_y = self.c_win_size(win)
-		if win_len <= 1: return # nothing fits
+		if win_len <= 1: return # nothing fits, don't even bother
 
 		# Fit stuff vertically
 		if win_rows < len(items) + 1: # pick/display items near highlighted one
@@ -577,7 +577,7 @@ class PAMixerUI(object):
 		if self._item_hl and self.conf.focus_new_items:
 			ts = self._item_hl_ts
 			if ts: ts += self.conf.focus_new_items_delay or 0
-			item = self.menu.item_newer(ts)
+			item = self.streams.item_newer(ts)
 			if item: self._item_hl = item
 		return self._item_hl
 
@@ -597,9 +597,9 @@ class PAMixerUI(object):
 		adjust_step = self.conf.adjust_step / 100.0
 
 		while True:
-			items, item_hl = self.menu.item_list, self.item_hl
-			if item_hl is None: item_hl = self.item_hl = self.menu.item_default()
-			if item_hl not in items: item_hl = self.menu.item_default()
+			items, item_hl = self.streams.item_list, self.item_hl
+			if item_hl is None: item_hl = self.item_hl = self.streams.item_default()
+			if item_hl not in items: item_hl = self.streams.item_default()
 			self.c_win_draw(win, items, item_hl)
 
 			key = None
@@ -694,14 +694,14 @@ def main(args=None):
 		with Pulse('pa-mixer-mk3', connect=False, threading_lock=True) as pulse:
 			pulse.connect(wait=conf.reconnect)
 
-			menu = PAMixerMenu(pulse, conf, fatal=conf.fatal)
+			streams = PAMixerStreams(pulse, conf, fatal=conf.fatal)
 			wakeup_pid = os.getpid()
 
-			with menu.update_wakeup_poller(menu.update_wakeup_handler) as poller_thread:
+			with streams.update_wakeup_poller(streams.update_wakeup_handler) as poller_thread:
 				log.debug('Starting pulsectl event poller thread...')
 				poller_thread.start()
 
-				with PAMixerUI(menu) as curses_ui:
+				with PAMixerUI(streams) as curses_ui:
 					# Any output will mess-up curses ui, so try to close sys.stderr if possible
 					if not conf.verbose and not conf.debug and not conf.dump_stream_params:
 						sys.stderr.flush()
