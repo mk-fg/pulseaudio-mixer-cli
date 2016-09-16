@@ -1,30 +1,98 @@
-pulseaudio-mixer-cli
---------------------
+======================
+ pulseaudio-mixer-cli
+======================
+-----------------------------------------------------------
+ Interactive ncurses UI to control volume of pulse streams
+-----------------------------------------------------------
 
-Interactive ncurses UI to control volume of pulse streams.
+.. contents::
+  :backlinks: none
+
+
+
+Description
+-----------
 
 Kinda like alsamixer, focused not on sink volume levels (which can actually be
 controlled via alsamixer, with alsa-pulse plugin), but rather on volume of
-individual streams, so you can turn down the music to hear the stuff from games,
+individual streams, so you can tune down the music to hear the stuff from games,
 mumble, skype or browser.
 
 In addition to interactive UI, script allows to match and configure sink/stream
 parameters via config file, so that when specific sink or stream appears,
-e.g. its volume can be capped, port changed, UI title adjusted, be hidden in UI,
-stuff like that.
+e.g. its volume can be capped, port changed, UI title adjusted, hidden - stuff
+like that.
 
-Control over individual process streams seem to be almost unique to pulseaudio,
-pity there aren't much tools built to harness it (at least weren't, initially).
-This one tries to fill the gap a bit.
+Easy control over audio streams that pulseaudio provides seem to be almost
+unique to it, pity there aren't many tools built to harness it (at least
+weren't, initially). This one tries to fill the gap a bit.
 
-Thanks to the most awesome contributors, the tool is now useable with
-system-wide pulseaudio instance, can mute streams/sinks, works with vi-style
-keys as well as cursor and has many other fixes and features.
 
-|
+How it looks
+````````````
 
-.. contents::
-  :backlinks: none
+...in a rather narrow terminal (to fit well on a github page), and without
+"inverted row" selection visible::
+
+  [++] Jack sink (PulseAudio JACK Sink)                  M [ ########################## ]
+  [++] HDMI 0 (hdmi-stereo@snd_hda_intel)                M [ ########################## ]
+  [81] ID 440 Analog (analog-stereo@snd_hda_intel)       - [ #####################----- ]
+  [35] mpv - Bax - Perceptions 206 on ETN.fm Jan-22-2015 - [ #########----------------- ]
+  [38] VLC media player (fraggod@malediction:24321)      - [ ##########---------------- ]
+  [54] Skype (fraggod@malediction:24202)                 - [ ##############------------ ]
+  [27] ALSA plug-in [PillarsOfEternity]                  - [ #######------------------- ]
+
+Sink levels always sorted/displayed on top, "M" or "-" to the left of the bar is
+a mute indicator.
+
+Stuff that's rarely or never used (e.g. Jack/HDMI sink levels) can be hidden (see below).
+
+
+Features (pa-mixer-mk3.py)
+``````````````````````````
+
+- Terminal app, very simple ascii, very basic controls, output volumes and mute only.
+
+- Listens and reacts to events from pulse, i.e. any stream/volume changes on the
+  server will be reflected in the UI immediately.
+
+- Robust - should work with any kind of terminal types/sizes and events, any
+  number of pulse streams or event floods, pulse server dying and restarting, etc.
+
+- Configurable UI behavior (e.g. focus policy, names, etc), volume range to
+  control, adjustment step.
+
+- Automation features (through config file) for matching streams and
+  auto-adjusting/limiting their volume, sink ports, rename/hide in the UI,
+  and such.
+
+- Uses libpulse and its "native" protocol.
+
+- Extensive debug logging, if enabled.
+
+
+Limitations (pa-mixer-mk3.py)
+`````````````````````````````
+
+- Very basic and dull UI, no colors, fancy unicode or anything.
+
+- Only volumes for sinks and sink-inputs are displayed/controllable via UI - no
+  sources, source-inputs, cards, modules, equalizers, etc.
+
+- No control over per-channel volume levels, always sets same level for all
+  channels.
+
+- Flat menu - doesn't reflect relations between sink-inputs and sinks they
+  belong to, not very suitable for multi-sink setups.
+
+- No options/controls to migrate streams between sinks/sources, kill/suspend
+  stuff, or any pactl-like actions like that.
+
+- Interactive mode only, no "oneshot" operation.
+
+- Not a self-contained script, depends on extra py module.
+
+See links section below for some of the good alternatives.
 
 
 
@@ -76,19 +144,6 @@ Usage
 Run the script with "-h" or "--help" option to see various parameters, but there
 aren't that many - most stuff is configurable via config file (described below).
 
-That's basically how it looks... in an overly narrow terminal (to fit on a github
-page), and without "inverted row" selection visible::
-
-  [++] Jack sink (PulseAudio JACK Sink)                  M [ ########################## ]
-  [++] HDMI 0 (hdmi-stereo@snd_hda_intel)                M [ ########################## ]
-  [81] ID 440 Analog (analog-stereo@snd_hda_intel)       - [ #####################----- ]
-  [35] mpv - Bax - Perceptions 206 on ETN.fm Jan-22-2015 - [ #########----------------- ]
-  [38] VLC media player (fraggod@malediction:24321)      - [ ##########---------------- ]
-  [54] Skype (fraggod@malediction:24202)                 - [ ##############------------ ]
-  [27] ALSA plug-in [PillarsOfEternity]                  - [ #######------------------- ]
-
-Sink levels always displayed on top, "M" or "-" to the left of the bar is a mute
-indicator. Stuff that one never expects to use can be hidden (see below).
 
 Controls
 ````````
@@ -111,6 +166,7 @@ Keyboard controls are:
   "1" - 10%, "2" - 20%, "3" - 30%, ..., "9" - 90%, "0" - 100%.
 
 Supposed to mimic ones in alsamixer and be somewhat intuitive, hardcoded.
+
 
 Config file
 ```````````
@@ -161,12 +217,22 @@ See more info on stream matching and parameters in `pa-mixer.example.cfg`_.
 
 .. _pa-mixer.example.cfg: pa-mixer.example.cfg
 
+
 Misc usage hints
 ````````````````
 
 - Running the thing in a drop-down terminal ("quake console" like guake,
   yakuake, tilda, terra, yeahconsole) makes it into something like a keyboard
   version of regular "tray volume app".
+
+- To set volume for very transient sounds (e.g. event "blips") that are too
+  quick to disappear to adjust them in any way, --dump-stream-parameters option
+  and volume setting through config file can be used (see "Config file" section
+  above for details).
+
+- Clients/apps that change their volume can be forced to have fixed volume or
+  min/max thresholds by using "volume-..." settings and "reapply: true"
+  (to enforce these on every volume-change event).
 
 
 
