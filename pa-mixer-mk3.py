@@ -53,6 +53,7 @@ class Conf(object):
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
 	verbose = False
 	reconnect = True
+	show_stored_values = True
 
 	stream_params = None
 	broken_chars_replace = '_'
@@ -110,6 +111,43 @@ def conf_update_from_file(conf, path_or_file):
 			if k == 'reapply' and conf.parse_bool(v):
 				conf.stream_params_reapply.append(sec)
 		conf.stream_params[sec] = params
+
+
+class PAMixerMenu(object):
+
+	items = tuple()
+	item_id_attr = 'id'
+
+	def update(self): return
+
+	@property
+	def item_list(self): return list(self.items)
+
+	def item_default(self):
+		items = self.item_list
+		if not items: return
+		return items[0]
+
+	def item_newer(self, ts): return
+
+	def item_id(self, item): return item.uid
+
+	def item_after(self, item=None):
+		if item:
+			for item2 in self.items:
+				if item is StopIteration: return item2
+				if self.item_id(item2) == self.item_id(item): item = StopIteration
+		return self.item_default()
+
+	def item_before(self, item=None):
+		if item:
+			item_prev = None
+			for item2 in self.items:
+				if self.item_id(item2) == self.item_id(item):
+					if not item_prev: break
+					return item_prev
+				item_prev = item2
+		return self.item_default()
 
 
 class PAMixerReconnect(Exception): pass
@@ -252,7 +290,7 @@ class PAMixerStreamsItem(object):
 	def get_prev(self): return self.streams.item_before(self)
 
 
-class PAMixerStreams(object):
+class PAMixerStreams(PAMixerMenu):
 
 	focus_policies = dict(first=op.itemgetter(0), last=op.itemgetter(-1))
 
@@ -446,28 +484,49 @@ class PAMixerStreams(object):
 		items = sorted(self.items, key=op.attrgetter('created_ts'), reverse=True)
 		if items and items[0].created_ts > ts: return items[0]
 
-	def item_after(self, item=None):
-		if item:
-			for item2 in self.items:
-				if item is StopIteration: return item2
-				if item2.uid == item.uid: item = StopIteration
-		return self.item_default()
 
-	def item_before(self, item=None):
-		if item:
-			item_prev = None
-			for item2 in self.items:
-				if item2.uid == item.uid:
-					if not item_prev: break
-					return item_prev
-				item_prev = item2
-		return self.item_default()
+class PAMixerAtticItem(object):
+
+	def __init__(self, attic, obj):
+		self.attic, self.conf, self.obj = attic, attic.conf, obj
+		self.uid = self.name = self.obj.name
+
+	@property
+	def muted(self):
+		return bool(self.obj.mute)
+	@muted.setter
+	def muted(self, val):
+		self.obj.mute = int(val)
+		# with self.attic.pulse_ctx() as pulse:
+
+	@property
+	def volume(self):
+		'Volume as one float in 0-1 range.'
+		return min(1.0, max(0,
+			self.obj.volume.value_flat - self.conf.min_volume ) / float(self.conf.max_volume))
+	@volume.setter
+	def volume(self, val):
+		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
+		self.obj.volume.value_flat = val_pulse
+		# with self.attic.pulse_ctx() as pulse:
+
+	def muted_toggle(self): return # self.muted = not self.muted
+	def volume_change(self, delta): return # self.volume += delta
+
+	def get_next(self): return self.attic.item_after(self)
+	def get_prev(self): return self.attic.item_before(self)
 
 
-class PAMixerAttic(object):
+class PAMixerAttic(PAMixerMenu):
 
-	def __init__(self, pulse, conf=None, fatal=False):
-		self.pulse, self.fatal, self.conf = pulse, fatal, conf or Conf()
+	def __init__(self, pulse_ctx, conf=None, fatal=False):
+		self.pulse_ctx, self.fatal, self.conf = pulse_ctx, fatal, conf or Conf()
+		self.update()
+
+	def update(self):
+		with self.pulse_ctx(trap_errors=False) as pulse:
+			self.items = sorted(( PAMixerAtticItem(self, sr)
+				for sr in pulse.stream_restore_list() ), key=op.attrgetter('name'))
 
 
 
@@ -494,6 +553,10 @@ class PAMixerUI(object):
 			self.c.endwin()
 			self.c = None
 
+
+	def c_key(self, k):
+		if len(k) == 1: return ord(k)
+		return getattr(self.c, 'key_{}'.format(k).upper())
 
 	def c_win_init(self):
 		# Used to create a window with borders here,
@@ -591,20 +654,18 @@ class PAMixerUI(object):
 		if draw_controls:
 			addstr(win_rows, pad_x, ' ')
 			addstr('x', self.c.A_REVERSE)
-			mode_desc = self.mode_desc[self.mode_switch(display=True)]
-			y, x = win.getyx()
+			(y, x), mode_desc = win.getyx(), self.mode_desc[self.mode_switch(dry_run=True)]
 			addstr(' - show {}'.format(mode_desc)[:win_len-x])
-
-	def c_key(self, k):
-		if len(k) == 1: return ord(k)
-		return getattr(self.c, 'key_{}'.format(k).upper())
 
 
 	_item_hl = _item_hl_ts = None
 
-	def mode_switch(self, display=False):
+	def mode_switch(self, dry_run=False):
 		mode = self.mode_opts.difference([self.mode]).pop()
-		if not display and getattr(self, mode, None): self.mode = mode
+		if not dry_run and getattr(self, mode, None):
+			log.debug('Switching display mode: {} -> {}', self.mode, mode)
+			self.mode = mode
+			self.menu.update()
 		return mode
 
 	@property
@@ -735,8 +796,8 @@ def main(args=None):
 
 			wakeup_pid = os.getpid()
 			attic, streams = None, PAMixerStreams(pulse, conf, fatal=conf.fatal)
-			# if pulse.stream_restore_test() is not None:
-			# 	attic = PAMixerAttic(pulse, conf, fatal=conf.fatal)
+			if conf.show_stored_values and pulse.stream_restore_test() is not None:
+				attic = PAMixerAttic(streams.update_wakeup, conf, fatal=conf.fatal)
 
 			with streams.update_wakeup_poller(streams.update_wakeup_handler) as poller_thread:
 				log.debug('Starting pulsectl event poller thread...')
