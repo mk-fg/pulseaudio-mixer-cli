@@ -47,11 +47,13 @@ a mute indicator.
 
 Stuff that's rarely or never used (e.g. Jack/HDMI sink levels) can be hidden (see below).
 
+There's also a separate list of module-stream-restore volumes, accessible via "x" key.
+
 
 Features (pa-mixer-mk3.py)
 ``````````````````````````
 
-- Terminal app, very simple ascii, very basic controls, output volumes and mute only.
+- Terminal app, very simple ascii tui, basic controls, output volumes and mute only.
 
 - Listens and reacts to events from pulse, i.e. any stream/volume changes on the
   server will be reflected in the UI immediately.
@@ -65,6 +67,10 @@ Features (pa-mixer-mk3.py)
 - Automation features (through config file) for matching streams and
   auto-adjusting/limiting their volume, sink ports, rename/hide in the UI,
   and such.
+
+- Ability to tweak volumes for audio roles (e.g. all "event" sounds) and
+  streams/apps that are not currently running via module-stream-restore api,
+  if available.
 
 - Uses libpulse and its "native" protocol.
 
@@ -159,11 +165,14 @@ Keyboard controls are:
 
 - "m" or "space" to toggle mute for selected sink or stream.
 
-- "q" to quit.
-
 - "1" through "0" (number row keys) to set specific level.
 
   "1" - 10%, "2" - 20%, "3" - 30%, ..., "9" - 90%, "0" - 100%.
+
+- "q" to quit.
+
+- "x" to toggle display between current sink/stream volumes and ones in
+  module-stream-restore db (if used/accessible).
 
 Supposed to mimic ones in alsamixer and be somewhat intuitive, hardcoded.
 
@@ -185,6 +194,7 @@ For example::
   use-media-name: true
   focus-default: last
   focus-new-items: false
+  show-controls: false
 
 Such config is totally optional, and might be useful in case default options
 aren't suitable for a specific setup.
@@ -218,21 +228,25 @@ See more info on stream matching and parameters in `pa-mixer.example.cfg`_.
 .. _pa-mixer.example.cfg: pa-mixer.example.cfg
 
 
-Misc usage hints
-````````````````
+Misc hints
+``````````
 
 - Running the thing in a drop-down terminal ("quake console" like guake,
   yakuake, tilda, terra, yeahconsole) makes it into something like a keyboard
   version of regular "tray volume app".
 
-- To set volume for very transient sounds (e.g. event "blips") that are too
-  quick to disappear to adjust them in any way, --dump-stream-parameters option
-  and volume setting through config file can be used (see "Config file" section
-  above for details).
+- To set volume for very transient sounds (e.g. notification "blips") that are
+  too quick to disappear or adjust them in any way, there are two options:
 
-- Clients/apps that change their volume can be forced to have fixed volume or
-  min/max thresholds by using "volume-..." settings and "reapply: true"
-  (to enforce these on every volume-change event).
+  - If module-stream-restore is loaded (usually is by default), use "x" key to
+    adjust all volumes that are stored there.
+
+  - ``--dump-stream-parameters`` option and volume setting through config file
+    can be used (see "Config file" section above for details).
+
+- Clients/apps that change their volume can be forced to have fixed volume level
+  or min/max thresholds by using "volume-..." settings and "reapply: true" (to
+  enforce these on every volume-change event).
 
 
 
@@ -267,9 +281,3 @@ Other similar projects
 - pavucontrol that comes with pulse has good GUI (for GNOME/X11 and such).
 
 Not an exhaustive list by any means.
-
-
-TODO
-----
-
-- Use/expose module-stream-restore extension API.
