@@ -54,6 +54,7 @@ class Conf(object):
 	verbose = False
 	reconnect = True
 	show_stored_values = True
+	show_controls = True
 
 	stream_params = None
 	broken_chars_replace = '_'
@@ -497,7 +498,8 @@ class PAMixerAtticItem(object):
 	@muted.setter
 	def muted(self, val):
 		self.obj.mute = int(val)
-		# with self.attic.pulse_ctx() as pulse:
+		with self.attic.pulse_ctx() as pulse:
+			pulse.stream_restore_write(self.obj, mode='replace')
 
 	@property
 	def volume(self):
@@ -508,10 +510,11 @@ class PAMixerAtticItem(object):
 	def volume(self, val):
 		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
 		self.obj.volume.value_flat = val_pulse
-		# with self.attic.pulse_ctx() as pulse:
+		with self.attic.pulse_ctx() as pulse:
+			pulse.stream_restore_write(self.obj, mode='replace')
 
-	def muted_toggle(self): return # self.muted = not self.muted
-	def volume_change(self, delta): return # self.volume += delta
+	def muted_toggle(self): self.muted = not self.muted
+	def volume_change(self, delta): self.volume += delta
 
 	def get_next(self): return self.attic.item_after(self)
 	def get_prev(self): return self.attic.item_before(self)
@@ -584,7 +587,7 @@ class PAMixerUI(object):
 		if not items: return
 
 		win_rows, win_len, pad_x, pad_y = self.c_win_size(win)
-		draw_controls = self.attic and win_rows > 5
+		draw_controls = self.conf.show_controls and self.attic and win_rows > 5
 		win_rows_reserved = 0 if draw_controls else 1
 		if win_len <= 3: return # nothing fits, don't even bother
 		addstr = ft.partial(self.c_win_add, win)
