@@ -116,7 +116,6 @@ def conf_update_from_file(conf, path_or_file):
 class PAMixerMenu(object):
 
 	items = tuple()
-	item_id_attr = 'id'
 
 	def update(self): return
 
@@ -487,9 +486,18 @@ class PAMixerStreams(PAMixerMenu):
 
 class PAMixerAtticItem(object):
 
+	name_prefix_subst = {
+		'application-name': 'app-name' }
+
 	def __init__(self, attic, obj):
 		self.attic, self.conf, self.obj = attic, attic.conf, obj
-		self.uid = self.name = self.obj.name
+		self.uid = n = self.obj.name
+		if n.startswith('sink-input-by-'): n = n[14:]
+		if ':' in n:
+			n_pre, n = n.split(':', 1)
+			n_pre = self.name_prefix_subst.get(n_pre, n_pre)
+			n = '{}:{}'.format(n_pre, n)
+		self.name = n
 
 	@property
 	def muted(self):
@@ -524,9 +532,12 @@ class PAMixerAttic(PAMixerMenu):
 		self.update()
 
 	def update(self):
-		with self.pulse_ctx(trap_errors=False) as pulse:
-			self.items = sorted(( PAMixerAtticItem(self, sr)
-				for sr in pulse.stream_restore_list() ), key=op.attrgetter('name'))
+		with self.pulse_ctx(trap_errors=False) as pulse: sr_list = pulse.stream_restore_list()
+		items = list()
+		for sr in sr_list:
+			if sr.name.startswith('source-output-by-'): continue
+			items.append(PAMixerAtticItem(self, sr))
+		self.items = sorted(items, key=op.attrgetter('name'))
 
 
 
