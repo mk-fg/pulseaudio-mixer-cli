@@ -620,7 +620,6 @@ class PAMixerUI(object):
 				break
 			assert not items_fit or pos in items_fit
 			items = list(map(op.itemgetter(1), sorted(items_fit.items(), key=op.itemgetter(0))))
-			print(items)
 
 		## Fit stuff horizontally
 		mute_button_len, level_len = 2, 5
