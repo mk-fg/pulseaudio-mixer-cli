@@ -539,6 +539,7 @@ class PAMixerAttic(PAMixerMenu):
 		items = list()
 		for sr in sr_list:
 			if sr.name.startswith('source-output-by-'): continue
+			if sr.channel_count == 0: continue
 			items.append(PAMixerAtticItem(self, sr))
 		self.items = sorted(items, key=op.attrgetter('name'))
 
