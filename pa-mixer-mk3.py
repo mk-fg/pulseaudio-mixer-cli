@@ -148,7 +148,11 @@ class PAMixerMenu(object):
 
 	def item_id(self, item): return item.uid
 
-	def item_shift(self, m, item=None):
+	def item_shift(self, item=None, m=0, t=None):
+		if t and self.items:
+			n = dict(first=0, last=len(self.items)-1).get(t)
+			assert n is not None, t
+			return self.items[n]
 		if item:
 			for n, item2 in enumerate(self.items):
 				if self.item_id(item2) == self.item_id(item):
@@ -736,6 +740,8 @@ class PAMixerUI(object):
 				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(adjust_step)
 				elif key_match(key, 'ppage'): self.item_hl = item_hl.get_prev(fit.rows)
 				elif key_match(key, 'npage'): self.item_hl = item_hl.get_next(fit.rows)
+				elif key_match(key, 'home'): self.item_hl = self.menu.item_shift(t='first')
+				elif key_match(key, 'end'): self.item_hl = self.menu.item_shift(t='last')
 				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%

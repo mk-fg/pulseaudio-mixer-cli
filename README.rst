@@ -163,7 +163,8 @@ Keyboard controls are:
 
   Emacs keys: "p" - up, "n" - down, "b" - left, "f" - right.
 
-  "Page Up" / "Page Down" to skip over visible number of rows up/down.
+  | "Page Up" / "Page Down" to skip over visible number of rows up/down.
+  | "Home" / "End" to select first/last item, respectively.
 
 - "m" or "space" to toggle mute for selected sink or stream.
 
