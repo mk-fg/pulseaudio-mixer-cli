@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-from collections import OrderedDict, defaultdict, deque
+from collections import OrderedDict, defaultdict, deque, namedtuple
 from contextlib import contextmanager
 import os, sys, re, time, logging, configparser
 import base64, hashlib, unicodedata
@@ -118,6 +118,18 @@ def conf_update_from_file(conf, path_or_file):
 		conf.stream_params[sec] = params
 
 
+class PAMixerMenuItem(object):
+
+	name, volume, muted, menu = '???', 0, False, None
+
+	def muted_toggle(self): self.muted = not self.muted
+	def volume_change(self, delta):
+		log.debug('Volume update: {} -> {} [{}]', self.volume, self.volume + delta, delta)
+		self.volume += delta
+
+	def get_next(self, m=1): return self.menu.item_after(self, m=m)
+	def get_prev(self, m=1): return self.menu.item_before(self, m=m)
+
 class PAMixerMenu(object):
 
 	items, conf = tuple(), Conf()
@@ -136,26 +148,20 @@ class PAMixerMenu(object):
 
 	def item_id(self, item): return item.uid
 
-	def item_after(self, item=None):
+	def item_shift(self, m, item=None):
 		if item:
-			for item2 in self.items:
-				if item is StopIteration: return item2
-				if self.item_id(item2) == self.item_id(item): item = StopIteration
-			if item == StopIteration:
-				return self.items[0] if self.conf.focus_wrap_last else item2
+			for n, item2 in enumerate(self.items):
+				if self.item_id(item2) == self.item_id(item):
+					n_max, n = len(self.items) - 1, n + m
+					if m > 0 and n > n_max: n = 0 if self.conf.focus_wrap_last else n_max
+					elif m < 0 and n < 0: n = n_max if self.conf.focus_wrap_first else 0
+					return self.items[n]
 		return self.item_default()
 
-	def item_before(self, item=None):
-		if item:
-			item_prev = None
-			for item2 in self.items:
-				if self.item_id(item2) == self.item_id(item):
-					if not item_prev:
-						return self.items[-1] if self.conf.focus_wrap_first else item2
-						break
-					return item_prev
-				item_prev = item2
-		return self.item_default()
+	def item_after(self, item=None, m=1):
+		return self.item_shift(item=item, m=m)
+	def item_before(self, item=None, m=1):
+		return self.item_shift(item=item, m=-m)
 
 
 class PAMixerReconnect(Exception): pass
@@ -172,10 +178,10 @@ class PAMixerEvent(object):
 		self.obj_type, self.obj_index, self.t = obj_type, obj_index, t
 	def __str__(self): return repr(dict((k, getattr(self, k)) for k in self.__slots__))
 
-class PAMixerStreamsItem(object):
+class PAMixerStreamsItem(PAMixerMenuItem):
 
 	def __init__(self, streams, obj_t, obj_id, obj):
-		self.streams, self.conf = streams, streams.conf
+		self.menu, self.conf = streams, streams.conf
 		self.t, self.uid = obj_t, obj_id
 		self.hidden = self.name_custom = False
 		self.created_ts = time.monotonic()
@@ -203,7 +209,7 @@ class PAMixerStreamsItem(object):
 	def _get_name(self):
 		try: return self._get_name_descriptive()
 		except Exception as err:
-			if self.streams.fatal: raise
+			if self.menu.fatal: raise
 			log.info('Failed to get descriptive name for {!r} ({}): {}', self.t, self.uid, err)
 		return self.t
 
@@ -264,7 +270,7 @@ class PAMixerStreamsItem(object):
 	@muted.setter
 	def muted(self, val):
 		self.obj.mute = int(val)
-		with self.streams.update_wakeup() as pulse: pulse.mute(self.obj, self.obj.mute)
+		with self.menu.update_wakeup() as pulse: pulse.mute(self.obj, self.obj.mute)
 
 	@property
 	def volume(self):
@@ -275,7 +281,7 @@ class PAMixerStreamsItem(object):
 	def volume(self, val):
 		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
 		log.debug('Setting volume: {} (pulse: {}) for {}', val, val_pulse, self)
-		with self.streams.update_wakeup() as pulse: pulse.volume_set_all_chans(self.obj, val_pulse)
+		with self.menu.update_wakeup() as pulse: pulse.volume_set_all_chans(self.obj, val_pulse)
 
 	@property
 	def port(self):
@@ -286,16 +292,7 @@ class PAMixerStreamsItem(object):
 		if self.t != 'sink':
 			log.warning( 'Setting ports is only'
 				' available for {!r}-type streams, not {!r}-type', 'sink', self.t )
-		with self.streams.update_wakeup() as pulse: pulse.port_set(self.obj, name)
-
-
-	def muted_toggle(self): self.muted = not self.muted
-	def volume_change(self, delta):
-		log.debug('Volume update: {} -> {} [{}]', self.volume, self.volume + delta, delta)
-		self.volume += delta
-
-	def get_next(self): return self.streams.item_after(self)
-	def get_prev(self): return self.streams.item_before(self)
+		with self.menu.update_wakeup() as pulse: pulse.port_set(self.obj, name)
 
 
 class PAMixerStreams(PAMixerMenu):
@@ -493,13 +490,13 @@ class PAMixerStreams(PAMixerMenu):
 		if items and items[0].created_ts > ts: return items[0]
 
 
-class PAMixerAtticItem(object):
+class PAMixerAtticItem(PAMixerMenuItem):
 
 	name_prefix_subst = {
 		'application-name': 'app-name' }
 
 	def __init__(self, attic, obj):
-		self.attic, self.conf, self.obj = attic, attic.conf, obj
+		self.menu, self.conf, self.obj = attic, attic.conf, obj
 		self.uid = n = self.obj.name
 		if n.startswith('sink-input-by-'): n = n[14:]
 		if ':' in n:
@@ -514,7 +511,7 @@ class PAMixerAtticItem(object):
 	@muted.setter
 	def muted(self, val):
 		self.obj.mute = int(val)
-		with self.attic.pulse_ctx() as pulse:
+		with self.menu.pulse_ctx() as pulse:
 			pulse.stream_restore_write(self.obj, mode='replace')
 
 	@property
@@ -526,14 +523,8 @@ class PAMixerAtticItem(object):
 	def volume(self, val):
 		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
 		self.obj.volume.value_flat = val_pulse
-		with self.attic.pulse_ctx() as pulse:
+		with self.menu.pulse_ctx() as pulse:
 			pulse.stream_restore_write(self.obj, mode='replace')
-
-	def muted_toggle(self): self.muted = not self.muted
-	def volume_change(self, delta): self.volume += delta
-
-	def get_next(self): return self.attic.item_after(self)
-	def get_prev(self): return self.attic.item_before(self)
 
 
 class PAMixerAttic(PAMixerMenu):
@@ -552,6 +543,8 @@ class PAMixerAttic(PAMixerMenu):
 		self.items = sorted(items, key=op.attrgetter('name'))
 
 
+
+PAMixerUIFit = namedtuple('PAMixerUIFit', 'rows controls')
 
 class PAMixerUI(object):
 
@@ -608,7 +601,7 @@ class PAMixerUI(object):
 
 		win_rows, win_len, pad_x, pad_y = self.c_win_size(win)
 		draw_controls = self.conf.show_controls and self.attic and win_rows > 5
-		win_rows_reserved = 0 if draw_controls else 1
+		win_rows_reserved = 1 if draw_controls else 2
 		if win_len <= 3: return # nothing fits, don't even bother
 		addstr = ft.partial(self.c_win_add, win)
 
@@ -679,6 +672,8 @@ class PAMixerUI(object):
 			(y, x), mode_desc = win.getyx(), self.mode_desc[self.mode_switch(dry_run=True)]
 			addstr(' - show {}'.format(mode_desc)[:win_len-x])
 
+		return PAMixerUIFit(len(items), draw_controls)
+
 
 	_item_hl = _item_hl_ts = None
 
@@ -721,7 +716,7 @@ class PAMixerUI(object):
 			items, item_hl = self.menu.item_list, self.item_hl
 			if item_hl is None: item_hl = self.item_hl = self.menu.item_default()
 			if item_hl not in items: item_hl = self.menu.item_default()
-			self.c_win_draw(win, items, item_hl)
+			fit = self.c_win_draw(win, items, item_hl)
 
 			key = None
 			while True:
@@ -739,6 +734,8 @@ class PAMixerUI(object):
 				elif key_match(key, 'down', 'j', 'n'): self.item_hl = item_hl.get_next()
 				elif key_match(key, 'left', 'h', 'b'): item_hl.volume_change(-adjust_step)
 				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(adjust_step)
+				elif key_match(key, 'ppage'): self.item_hl = item_hl.get_prev(fit.rows)
+				elif key_match(key, 'npage'): self.item_hl = item_hl.get_next(fit.rows)
 				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
