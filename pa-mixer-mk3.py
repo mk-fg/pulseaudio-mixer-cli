@@ -740,7 +740,6 @@ class PAMixerUI(object):
 				elif key_match(key, 'left', 'h', 'b'): item_hl.volume_change(-adjust_step)
 				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(adjust_step)
 				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
-				elif key_match(key, 'x'): self.mode_switch()
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
 
@@ -751,6 +750,7 @@ class PAMixerUI(object):
 					win = self.c_win_init()
 				else:
 					win.resize(*win.getmaxyx())
+			elif key_match(key, 'x'): self.mode_switch()
 			elif key_match(key, 'q'): break
 
 	def run(self):
