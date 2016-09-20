@@ -38,7 +38,7 @@ def uid_str( seed=None, length=4,
 class Conf(object):
 	def __repr__(self): return repr(vars(self))
 
-	adjust_step = 5 # percent, 0-100
+	adjust_step = 5.0 # percent, 0-100
 	# Volume values are relative to "normal" (non-soft-boosted) pulseaudio volume
 	max_volume = 1.0 # relative value, displayed as "100%"
 	min_volume = 0.01 # relative value, displayed as "0%"
@@ -61,6 +61,10 @@ class Conf(object):
 	focus_default = 'first' # either "first" or "last"
 	focus_new_items = True
 	focus_new_items_delay = 5.0 # min seconds since last focus change to trigger this
+
+	# Whether to wrap focus when going past first/last item
+	focus_wrap_first = False
+	focus_wrap_last = False
 
 	@staticmethod
 	def parse_bool(val, _states={
@@ -116,7 +120,7 @@ def conf_update_from_file(conf, path_or_file):
 
 class PAMixerMenu(object):
 
-	items = tuple()
+	items, conf = tuple(), Conf()
 
 	def update(self): return
 
@@ -137,6 +141,8 @@ class PAMixerMenu(object):
 			for item2 in self.items:
 				if item is StopIteration: return item2
 				if self.item_id(item2) == self.item_id(item): item = StopIteration
+			if item == StopIteration:
+				return self.items[0] if self.conf.focus_wrap_last else item2
 		return self.item_default()
 
 	def item_before(self, item=None):
@@ -144,7 +150,9 @@ class PAMixerMenu(object):
 			item_prev = None
 			for item2 in self.items:
 				if self.item_id(item2) == self.item_id(item):
-					if not item_prev: break
+					if not item_prev:
+						return self.items[-1] if self.conf.focus_wrap_first else item2
+						break
 					return item_prev
 				item_prev = item2
 		return self.item_default()
