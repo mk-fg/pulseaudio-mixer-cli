@@ -51,6 +51,7 @@ class Conf(object):
 	name_show_level = True
 
 	overkill_redraw = False # if terminal gets resized often, might cause noticeable flickering
+	overkill_updates = False # always refresh lists of sinks/streams from scratch
 	verbose = False
 	reconnect = True
 	show_stored_values = True
@@ -319,7 +320,7 @@ class PAMixerStreams(PAMixerMenu):
 			if self.connected is False: raise PAMixerReconnect()
 
 			# Add/remove/update items
-			if incremental and not ev: break
+			if not self.conf.overkill_updates and incremental and not ev: break
 			obj_new, obj_gone = set(), set()
 			obj_id_func = lambda t,index: '{}-{}'.format(t, index)
 			if not ev: obj_gone.update(self.item_objs) # i.e. replace whole list
