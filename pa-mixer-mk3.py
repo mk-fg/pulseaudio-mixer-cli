@@ -135,7 +135,7 @@ class PAMixerMenu(object):
 
 	items, controls, conf = tuple(), OrderedDict(), Conf()
 
-	def update(self): return
+	def update(self, incremental=False): return
 
 	@property
 	def item_list(self): return list(self.items)
@@ -310,7 +310,7 @@ class PAMixerStreams(PAMixerMenu):
 		self.connected, self._updates = None, deque()
 		self._pulse_hold, self._pulse_lock = threading.Lock(), threading.Lock()
 
-	def update(self):
+	def update(self, incremental=False):
 		while True:
 			try: ev = self._updates.popleft()
 			except: ev = None
@@ -319,6 +319,7 @@ class PAMixerStreams(PAMixerMenu):
 			if self.connected is False: raise PAMixerReconnect()
 
 			# Add/remove/update items
+			if incremental and not ev: break
 			obj_new, obj_gone = set(), set()
 			obj_id_func = lambda t,index: '{}-{}'.format(t, index)
 			if not ev: obj_gone.update(self.item_objs) # i.e. replace whole list
@@ -482,7 +483,7 @@ class PAMixerStreams(PAMixerMenu):
 
 	@property
 	def item_list(self):
-		self.update()
+		self.update(incremental=True)
 		return self.items
 
 	def item_default(self):
@@ -550,7 +551,8 @@ class PAMixerAttic(PAMixerMenu):
 		self.pulse_ctx, self.fatal, self.conf = pulse_ctx, fatal, conf or Conf()
 		self.update()
 
-	def update(self):
+	def update(self, incremental=False):
+		if incremental: return
 		with self.pulse_ctx(trap_errors=False) as pulse: sr_list = pulse.stream_restore_list()
 		items = list()
 		for sr in sr_list:
@@ -698,8 +700,8 @@ class PAMixerUI(object):
 
 	_item_hl = _item_hl_ts = None
 
-	def mode_switch(self, dry_run=False):
-		mode = self.mode_opts.difference([self.mode]).pop()
+	def mode_switch(self, mode=None, dry_run=False):
+		if not mode: mode = self.mode_opts.difference([self.mode]).pop()
 		if not dry_run and getattr(self, mode, None):
 			log.debug('Switching display mode: {} -> {}', self.mode, mode)
 			self.mode = mode
@@ -733,6 +735,7 @@ class PAMixerUI(object):
 		win = self.c_win_init()
 		adjust_step = self.conf.adjust_step / 100.0
 
+		self.mode_switch('streams')
 		while True:
 			items, item_hl = self.menu.item_list, self.item_hl
 			if item_hl is None: item_hl = self.item_hl = self.menu.item_default()
@@ -770,7 +773,12 @@ class PAMixerUI(object):
 				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
+
 				elif key > 0: item_hl.special_action(key, key_match) # usually no-op
+				elif key < 0: # signal - usually from pulse events
+					for k in self.mode_opts:
+						menu = getattr(self, k)
+						if menu: menu.update(incremental=True)
 
 			if key_match(key, 'resize'):
 				if self.conf.overkill_redraw:
