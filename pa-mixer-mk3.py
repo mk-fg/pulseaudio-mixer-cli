@@ -126,13 +126,14 @@ class PAMixerMenuItem(object):
 	def volume_change(self, delta):
 		log.debug('Volume update: {} -> {} [{}]', self.volume, self.volume + delta, delta)
 		self.volume += delta
+	def special_action(self, key, key_match): pass
 
 	def get_next(self, m=1): return self.menu.item_after(self, m=m)
 	def get_prev(self, m=1): return self.menu.item_before(self, m=m)
 
 class PAMixerMenu(object):
 
-	items, conf = tuple(), Conf()
+	items, controls, conf = tuple(), OrderedDict(), Conf()
 
 	def update(self): return
 
@@ -509,6 +510,9 @@ class PAMixerAtticItem(PAMixerMenuItem):
 			n = '{}:{}'.format(n_pre, n)
 		self.name = n
 
+	def __repr__(self):
+		return '<{}[{:x}] stream_restore: {}>'.format(self.__class__.__name__, id(self), self.name)
+
 	@property
 	def muted(self):
 		return bool(self.obj.mute)
@@ -526,12 +530,21 @@ class PAMixerAtticItem(PAMixerMenuItem):
 	@volume.setter
 	def volume(self, val):
 		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
+		log.debug('Setting stream_restore volume: {} (pulse: {}) for {}', val, val_pulse, self)
 		self.obj.volume.value_flat = val_pulse
 		with self.menu.pulse_ctx() as pulse:
 			pulse.stream_restore_write(self.obj, mode='replace')
 
+	def special_action(self, key, key_match):
+		if key_match(key, 'enter') or (0 < key < 0x110000 and chr(key) == '\n'):
+			log.debug('Applying stream_restore volume for: {}', self)
+			with self.menu.pulse_ctx() as pulse:
+				pulse.stream_restore_write(self.obj, mode='replace', apply_immediately=True)
+
 
 class PAMixerAttic(PAMixerMenu):
+
+	controls = dict(enter='apply selected level to active streams')
 
 	def __init__(self, pulse_ctx, conf=None, fatal=False):
 		self.pulse_ctx, self.fatal, self.conf = pulse_ctx, fatal, conf or Conf()
@@ -599,12 +612,12 @@ class PAMixerUI(object):
 			if not test: log.debug('curses addstr() returned error ({}), args: {}', err, args)
 		else: return True
 
-	def c_win_draw(self, win, items, item_hl):
+	def c_win_draw(self, win, items, item_hl, controls):
 		win.erase()
 		if not items: return
 
 		win_rows, win_len, pad_x, pad_y = self.c_win_size(win)
-		draw_controls = self.conf.show_controls and self.attic and win_rows > 5
+		draw_controls = controls and win_rows > 5
 		win_rows_reserved = 1 if draw_controls else 2
 		if win_len <= 3: return # nothing fits, don't even bother
 		addstr = ft.partial(self.c_win_add, win)
@@ -671,10 +684,14 @@ class PAMixerUI(object):
 					addstr(row, item_name_end + mute_button_len, bar)
 
 		if draw_controls:
-			addstr(win_rows, pad_x, ' ')
-			addstr('x', self.c.A_REVERSE)
-			(y, x), mode_desc = win.getyx(), self.mode_desc[self.mode_switch(dry_run=True)]
-			addstr(' - show {}'.format(mode_desc)[:win_len-x])
+			addstr(win_rows, pad_x, '')
+			for key, desc in controls.items():
+				addstr(' ')
+				addstr(key, self.c.A_REVERSE)
+				addstr(' - ')
+				y, x = win.getyx()
+				addstr(desc[:win_len-x-1])
+				addstr(' ')
 
 		return PAMixerUIFit(len(items), draw_controls)
 
@@ -720,7 +737,15 @@ class PAMixerUI(object):
 			items, item_hl = self.menu.item_list, self.item_hl
 			if item_hl is None: item_hl = self.item_hl = self.menu.item_default()
 			if item_hl not in items: item_hl = self.menu.item_default()
-			fit = self.c_win_draw(win, items, item_hl)
+
+			controls = OrderedDict()
+			if self.conf.show_controls:
+				if self.attic:
+					controls['x'] = 'show {}'.format(
+						self.mode_desc[self.mode_switch(dry_run=True)] )
+				controls.update(self.menu.controls or dict())
+
+			fit = self.c_win_draw(win, items, item_hl, controls)
 
 			key = None
 			while True:
@@ -745,6 +770,7 @@ class PAMixerUI(object):
 				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
+				elif key > 0: item_hl.special_action(key, key_match) # usually no-op
 
 			if key_match(key, 'resize'):
 				if self.conf.overkill_redraw:
