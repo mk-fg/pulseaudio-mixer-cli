@@ -3,7 +3,7 @@
 import itertools as it, operator as op, functools as ft
 from collections import OrderedDict, defaultdict, deque, namedtuple
 from contextlib import contextmanager
-import os, sys, re, time, logging, configparser
+import os, sys, io, re, time, logging, configparser
 import base64, hashlib, unicodedata
 import signal, threading
 
@@ -89,7 +89,12 @@ def conf_update_from_file(conf, path_or_file):
 	with path_or_file as src:
 		config = configparser.RawConfigParser(
 			allow_no_value=True, inline_comment_prefixes=(';',) )
-		config.readfp(src)
+		try: config.readfp(src)
+		except configparser.MissingSectionHeaderError:
+			src.seek(0)
+			src = src.read()
+			src = io.StringIO('[default]' + ('\r\n' if '\r\n' in src else '\n') + src)
+			config.readfp(src)
 
 	for k in dir(conf):
 		if k.startswith('_'): continue
