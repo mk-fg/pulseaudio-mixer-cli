@@ -689,9 +689,9 @@ class PAMixerUI(object):
 				addstr(' ')
 				addstr(key, self.c.A_REVERSE)
 				addstr(' - ')
-				y, x = win.getyx()
-				addstr(desc[:win_len-x-1])
-				addstr(' ')
+				desc_max_len = win_len - win.getyx()[1] - 1
+				addstr((desc + ' ')[:desc_max_len])
+				if len(desc) >= desc_max_len: break
 
 		return PAMixerUIFit(len(items), draw_controls)
 
