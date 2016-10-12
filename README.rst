@@ -177,6 +177,12 @@ Keyboard controls are:
 - "x" to toggle display between current sink/stream volumes and ones in
   module-stream-restore db (if used/accessible).
 
+- module-stream-restore tab only:
+
+  - "d" to remove (i.e. forget) stored value for stream/role.
+
+  - "enter" to apply selected value to active streams.
+
 Supposed to mimic ones in alsamixer and be somewhat intuitive, hardcoded.
 
 

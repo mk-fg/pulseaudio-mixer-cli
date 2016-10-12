@@ -144,7 +144,7 @@ class PAMixerMenu(object):
 	def update(self, incremental=False): return
 
 	@property
-	def item_list(self): return list(self.items)
+	def item_list(self): return list(self.items) # for display only
 
 	def item_default(self):
 		items = self.item_list
@@ -543,15 +543,20 @@ class PAMixerAtticItem(PAMixerMenuItem):
 			pulse.stream_restore_write(self.obj, mode='replace')
 
 	def special_action(self, key, key_match):
-		if key_match(key, 'enter') or (0 < key < 0x110000 and chr(key) == '\n'):
+		if key_match(key, 'enter', '\n'):
 			log.debug('Applying stream_restore volume for: {}', self)
 			with self.menu.pulse_ctx() as pulse:
 				pulse.stream_restore_write(self.obj, mode='replace', apply_immediately=True)
+		if key_match(key, 'd'):
+			with self.menu.pulse_ctx() as pulse:
+				pulse.stream_restore_delete(self.obj.name)
+			del self.menu.item_dict[self.name]
 
 
 class PAMixerAttic(PAMixerMenu):
 
-	controls = dict(enter='apply selected level to active streams')
+	controls = dict( d='delete entry',
+		enter='apply selected level to active streams' )
 
 	def __init__(self, pulse_ctx, conf=None, fatal=False):
 		self.pulse_ctx, self.fatal, self.conf = pulse_ctx, fatal, conf or Conf()
@@ -565,7 +570,12 @@ class PAMixerAttic(PAMixerMenu):
 			if sr.name.startswith('source-output-by-'): continue
 			if sr.channel_count == 0: continue
 			items.append(PAMixerAtticItem(self, sr))
-		self.items = sorted(items, key=op.attrgetter('name'))
+		self.item_dict = OrderedDict(
+			(item.name, item) for item in sorted(items, key=op.attrgetter('name')) )
+
+	@property
+	def items(self):
+		return list(self.item_dict.values())
 
 
 
