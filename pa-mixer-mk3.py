@@ -10,7 +10,7 @@ import signal, threading
 from pulsectl import Pulse, PulseLoopStop, PulseDisconnected, PulseIndexError
 
 
-class LogMessage(object):
+class LogMessage:
 	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
 	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
 
@@ -35,7 +35,7 @@ def uid_str( seed=None, length=4,
 	return base64.urlsafe_b64encode(seed).decode()
 
 
-class Conf(object):
+class Conf:
 	def __repr__(self): return repr(vars(self))
 
 	adjust_step = 5.0 # percent, 0-100
@@ -124,7 +124,7 @@ def conf_update_from_file(conf, path_or_file):
 		conf.stream_params[sec] = params
 
 
-class PAMixerMenuItem(object):
+class PAMixerMenuItem:
 
 	name, volume, muted, menu = '???', 0, False, None
 
@@ -137,7 +137,7 @@ class PAMixerMenuItem(object):
 	def get_next(self, m=1): return self.menu.item_after(self, m=m)
 	def get_prev(self, m=1): return self.menu.item_before(self, m=m)
 
-class PAMixerMenu(object):
+class PAMixerMenu:
 
 	focus_policies = dict(first=op.itemgetter(0), last=op.itemgetter(-1))
 	items, controls, conf = tuple(), OrderedDict(), Conf()
@@ -181,7 +181,7 @@ class PAMixerMenu(object):
 
 class PAMixerReconnect(Exception): pass
 
-class PAMixerEvent(object):
+class PAMixerEvent:
 	__slots__ = 'obj_type obj_index t'.split()
 	pulsectl_facility_map = dict(sink='sink', sink_input='stream')
 	@classmethod
@@ -578,7 +578,7 @@ class PAMixerAttic(PAMixerMenu):
 
 PAMixerUIFit = namedtuple('PAMixerUIFit', 'rows controls')
 
-class PAMixerUI(object):
+class PAMixerUI:
 
 	item_len_min = 10
 	bar_len_min = 10
