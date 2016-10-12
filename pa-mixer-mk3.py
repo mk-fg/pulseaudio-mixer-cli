@@ -139,6 +139,7 @@ class PAMixerMenuItem(object):
 
 class PAMixerMenu(object):
 
+	focus_policies = dict(first=op.itemgetter(0), last=op.itemgetter(-1))
 	items, controls, conf = tuple(), OrderedDict(), Conf()
 
 	def update(self, incremental=False): return
@@ -146,13 +147,13 @@ class PAMixerMenu(object):
 	@property
 	def item_list(self): return list(self.items) # for display only
 
-	def item_default(self, n=None, fallback=None):
+	def item_default(self, n=None):
 		items = self.item_list
 		if not items: return
 		idx = None
-		if n: idx = max(0, min(n, len(items)-1))
-		if idx is None and fallback: return fallback(items)
-		return items[idx or 0]
+		if n is not None: idx = max(0, min(n, len(items)-1))
+		return items[idx] if idx is not None\
+			else self.focus_policies[self.conf.focus_default](items)
 
 	def item_newer(self, ts): return
 
@@ -310,8 +311,6 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 
 
 class PAMixerStreams(PAMixerMenu):
-
-	focus_policies = dict(first=op.itemgetter(0), last=op.itemgetter(-1))
 
 	def __init__(self, pulse, conf=None, fatal=False):
 		self.pulse, self.fatal, self.conf = pulse, fatal, conf or Conf()
@@ -494,11 +493,6 @@ class PAMixerStreams(PAMixerMenu):
 	def item_list(self):
 		self.update(incremental=True)
 		return self.items
-
-	def item_default(self, n=None):
-		if not self.items: return
-		return super(PAMixerStreams, self).item_default(
-			n=n, fallback=self.focus_policies[self.conf.focus_default] )
 
 	def item_newer(self, ts):
 		items = sorted(self.items, key=op.attrgetter('created_ts'), reverse=True)
@@ -755,15 +749,15 @@ class PAMixerUI(object):
 		adjust_step = self.conf.adjust_step / 100.0
 
 		self.mode_switch('streams')
-		item_hl_n = None
+		item_hl_n = dict()
 		while True:
 			items, item_hl = self.menu.item_list, self.item_hl
 			if item_hl:
-				try: item_hl_n= items.index(item_hl)
+				try: item_hl_n[self.mode]= items.index(item_hl)
 				except ValueError: item_hl = None
 			if not item_hl:
-				item_hl = self.item_hl = self.menu.item_default(item_hl_n)
-				if item_hl: item_hl_n= items.index(item_hl)
+				item_hl = self.item_hl = self.menu.item_default(item_hl_n.get(self.mode))
+				if item_hl: item_hl_n[self.mode]= items.index(item_hl)
 
 			controls = OrderedDict()
 			if self.conf.show_controls:
