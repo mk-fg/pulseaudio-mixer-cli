@@ -146,10 +146,13 @@ class PAMixerMenu(object):
 	@property
 	def item_list(self): return list(self.items) # for display only
 
-	def item_default(self):
+	def item_default(self, n=None, fallback=None):
 		items = self.item_list
 		if not items: return
-		return items[0]
+		idx = None
+		if n: idx = max(0, min(n, len(items)-1))
+		if idx is None and fallback: return fallback(items)
+		return items[idx or 0]
 
 	def item_newer(self, ts): return
 
@@ -492,10 +495,10 @@ class PAMixerStreams(PAMixerMenu):
 		self.update(incremental=True)
 		return self.items
 
-	def item_default(self):
+	def item_default(self, n=None):
 		if not self.items: return
-		func = self.focus_policies[self.conf.focus_default]
-		return func(self.items)
+		return super(PAMixerStreams, self).item_default(
+			n=n, fallback=self.focus_policies[self.conf.focus_default] )
 
 	def item_newer(self, ts):
 		items = sorted(self.items, key=op.attrgetter('created_ts'), reverse=True)
@@ -752,10 +755,15 @@ class PAMixerUI(object):
 		adjust_step = self.conf.adjust_step / 100.0
 
 		self.mode_switch('streams')
+		item_hl_n = None
 		while True:
 			items, item_hl = self.menu.item_list, self.item_hl
-			if item_hl is None: item_hl = self.item_hl = self.menu.item_default()
-			if item_hl not in items: item_hl = self.menu.item_default()
+			if item_hl:
+				try: item_hl_n= items.index(item_hl)
+				except ValueError: item_hl = None
+			if not item_hl:
+				item_hl = self.item_hl = self.menu.item_default(item_hl_n)
+				if item_hl: item_hl_n= items.index(item_hl)
 
 			controls = OrderedDict()
 			if self.conf.show_controls:
