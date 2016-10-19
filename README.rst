@@ -127,7 +127,7 @@ module must be installed (either via OS packaging system, or e.g. ``pip
 install --user pulsectl``).
 
 If using older scripts with dbus interface, make sure you have ``load-module
-module-dbus-protocol`` line in /etc/pulse/default.pa (or ``/etc/pulse/system.pa``,
+module-dbus-protocol`` line in ``/etc/pulse/default.pa`` (or ``/etc/pulse/system.pa``,
 if system-wide daemon is used) and dbus-python package installed.
 
 Requirements (pa-mixer-mk3.py)
