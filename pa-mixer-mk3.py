@@ -517,6 +517,10 @@ class PAMixerAtticItem(PAMixerMenuItem):
 	def __repr__(self):
 		return '<{}[{:x}] stream_restore: {}>'.format(self.__class__.__name__, id(self), self.name)
 
+	def init_channels(self, obj, value=0):
+		if obj.volume.values: return
+		obj.channel_list, obj.volume.values = ['mono'], [value]
+
 	@property
 	def muted(self):
 		return bool(self.obj.mute)
@@ -529,10 +533,12 @@ class PAMixerAtticItem(PAMixerMenuItem):
 	@property
 	def volume(self):
 		'Volume as one float in 0-1 range.'
+		self.init_channels(self.obj)
 		return min(1.0, max(0,
 			self.obj.volume.value_flat - self.conf.min_volume ) / float(self.conf.max_volume))
 	@volume.setter
 	def volume(self, val):
+		self.init_channels(self.obj)
 		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
 		log.debug('Setting stream_restore volume: {} (pulse: {}) for {}', val, val_pulse, self)
 		self.obj.volume.value_flat = val_pulse
@@ -565,7 +571,6 @@ class PAMixerAttic(PAMixerMenu):
 		items = list()
 		for sr in sr_list:
 			if sr.name.startswith('source-output-by-'): continue
-			if sr.channel_count == 0: continue
 			items.append(PAMixerAtticItem(self, sr))
 		self.item_dict = OrderedDict(
 			(item.name, item) for item in sorted(items, key=op.attrgetter('name')) )
