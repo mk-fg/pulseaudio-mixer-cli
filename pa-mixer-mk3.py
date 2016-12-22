@@ -7,7 +7,10 @@ import os, sys, io, re, time, logging, configparser
 import base64, hashlib, unicodedata
 import signal, threading
 
-from pulsectl import Pulse, PulseLoopStop, PulseDisconnected, PulseIndexError
+from pulsectl import (
+	Pulse,
+	PulseEventTypeEnum as ev_t, PulseEventFacilityEnum as ev_fac, PulseEventMaskEnum as ev_m,
+	PulseLoopStop, PulseDisconnected, PulseIndexError )
 
 
 class LogMessage:
@@ -62,6 +65,7 @@ class Conf:
 	focus_default = 'first' # either "first" or "last"
 	focus_new_items = True
 	focus_new_items_delay = 5.0 # min seconds since last focus change to trigger this
+	event_proc_delay = 0.3
 
 	# Whether to wrap focus when going past first/last item
 	focus_wrap_first = False
@@ -386,15 +390,39 @@ class PAMixerStreams(PAMixerMenu):
 
 	_update_wakeup_break = None
 	@contextmanager
-	def update_wakeup_poller( self, wakeup_handler,
-			wakeup_pid=None, wakeup_sig=signal.SIGUSR1 ):
-		if wakeup_pid is None: wakeup_pid = os.getpid()
-		def ev_sig_handler(sig=None, frm=None):
-			while True:
+	def update_wakeup_poller(self, wakeup_handler):
+		'''Context that runs `wakeup_handler` for pulse sink/sink-input events.
+			Implemented via pulse-event-listener daemon
+				thread which interrupts main one via timer signals.
+			`conf.event_proc_delay` and timer signals (instead of os.kill) are to avoid
+				calling handler for very transient sink-inputs (e.g. many few-ms click sounds).'''
+		wakeup_pid, wakeup_sig = os.getpid(), signal.SIGALRM
+		ev_queue, ev_timer_delay, ev_timer_set = deque(), self.conf.event_proc_delay or 0, False
+
+		def ev_queue_cleanup(ev_queue):
+			'''Discard/dedup new-change-remove event sequences for same object(s).
+				This is optimization for transient sink-inputs,
+					which are shorter than `conf.event_proc_delay` and multiple changes.'''
+			ev_buff = OrderedDict()
+			while ev_queue:
 				try: ev = ev_queue.popleft()
 				except IndexError: break
-				wakeup_handler(ev)
+				if ev.t == ev_t.remove and ev_buff.pop(
+						(ev_t.new, ev.obj_type, ev.obj_index), False ):
+					ev_buff.pop((ev_t.change, ev.obj_type, ev.obj_index), None)
+				else: ev_buff[ev.t, ev.obj_type, ev.obj_index] = ev
+			return list(ev_buff.values())
+
+		def ev_sig_handler(sig=None, frm=None):
+			nonlocal ev_timer_set
+			if sig is not None: ev_timer_set = False
+			while ev_queue:
+				ev_buff = ev_queue_cleanup(ev_queue)
+				if not ev_buff: break
+				for ev in ev_buff: wakeup_handler(ev)
+
 		def ev_cb(ev_pulse=None):
+			nonlocal ev_timer_set
 			if not ev_pulse:
 				log.debug('pulsectl disconnected')
 				wakeup_handler(disconnected=True)
@@ -403,10 +431,15 @@ class PAMixerStreams(PAMixerMenu):
 			ev = ev_pulse and PAMixerEvent.from_pulsectl_ev(ev_pulse)
 			if not ev: return
 			ev_queue.append(ev)
-			if poller_thread is threading.current_thread(): os.kill(wakeup_pid, wakeup_sig)
+			if poller_thread is threading.current_thread():
+				if not ev_timer_delay: os.kill(wakeup_pid, wakeup_sig)
+				elif not ev_timer_set:
+					signal.setitimer(signal.ITIMER_REAL, ev_timer_delay)
+					ev_timer_set = True
 			else: ev_sig_handler()
+
 		def poller():
-			self.pulse.event_mask_set('sink', 'sink_input')
+			self.pulse.event_mask_set(ev_m.sink, ev_m.sink_input)
 			self.pulse.event_callback_set(ev_cb)
 			while True:
 				with self._pulse_hold: self._pulse_lock.acquire() # ...threads ;(
@@ -419,7 +452,7 @@ class PAMixerStreams(PAMixerMenu):
 					break
 				finally: self._pulse_lock.release()
 				if not poller_thread: break
-		ev_queue = deque()
+
 		signal.signal(wakeup_sig, ev_sig_handler)
 		poller_thread = threading.Thread(target=poller, name='pulsectl', daemon=True)
 		try: yield poller_thread
@@ -877,7 +910,6 @@ def main(args=None):
 		with Pulse('pa-mixer-mk3', connect=False, threading_lock=True) as pulse:
 			pulse.connect(wait=conf.reconnect)
 
-			wakeup_pid = os.getpid()
 			attic, streams = None, PAMixerStreams(pulse, conf, fatal=conf.fatal)
 			if conf.show_stored_values and pulse.stream_restore_test() is not None:
 				attic = PAMixerAttic(streams.update_wakeup, conf, fatal=conf.fatal)
