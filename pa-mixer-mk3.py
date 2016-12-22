@@ -207,6 +207,7 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 			dump = OrderedDict(uid=self.uid, name=self.name)
 			dump['props'] = sorted(self.obj.proplist.items())
 			pprint(dump, sys.stderr)
+			sys.stderr.flush()
 
 	def __repr__(self):
 		return '<{}[{:x}] {}[{}]: {}>'.format(
