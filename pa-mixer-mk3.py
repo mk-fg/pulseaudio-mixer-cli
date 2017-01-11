@@ -65,7 +65,7 @@ class Conf:
 	focus_default = 'first' # either "first" or "last"
 	focus_new_items = True
 	focus_new_items_delay = 5.0 # min seconds since last focus change to trigger this
-	event_proc_delay = 0.3
+	event_proc_delay = 0.0
 
 	# Whether to wrap focus when going past first/last item
 	focus_wrap_first = False
