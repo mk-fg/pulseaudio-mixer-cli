@@ -65,7 +65,8 @@ class Conf:
 	focus_default = 'first' # either "first" or "last"
 	focus_new_items = True
 	focus_new_items_delay = 5.0 # min seconds since last focus change to trigger this
-	event_proc_delay = 0.0
+	event_proc_delay = 0.0 # 0 - disable
+	force_refresh_interval = 0.0 # 0 or negative - disable
 
 	# Whether to wrap focus when going past first/last item
 	focus_wrap_first = False
@@ -354,7 +355,7 @@ class PAMixerStreams(PAMixerMenu):
 						if obj_id not in self.item_objs:
 							obj_new.add(obj_id)
 							self.item_objs[obj_id] = PAMixerStreamsItem(self, obj_t, obj_id, obj)
-						elif obj_list_full is None: self.item_objs[obj_id].update(obj)
+						else: self.item_objs[obj_id].update(obj)
 						obj_gone.discard(obj_id)
 
 			for obj_id in obj_gone: self.item_objs.pop(obj_id, None)
@@ -423,14 +424,12 @@ class PAMixerStreams(PAMixerMenu):
 
 		def ev_cb(ev_pulse=None):
 			nonlocal ev_timer_set
-			if not ev_pulse:
-				log.debug('pulsectl disconnected')
-				wakeup_handler(disconnected=True)
-			else: log.debug('pulsectl event: {} {} {}', ev_pulse.facility, ev_pulse.t, ev_pulse.index)
+			if ev_pulse:
+				log.debug( 'pulsectl event: {} {} {}',
+					ev_pulse.facility, ev_pulse.t, ev_pulse.index )
 			if not poller_thread: return
 			ev = ev_pulse and PAMixerEvent.from_pulsectl_ev(ev_pulse)
-			if not ev: return
-			ev_queue.append(ev)
+			if ev: ev_queue.append(ev)
 			if poller_thread is threading.current_thread():
 				if not ev_timer_delay: os.kill(wakeup_pid, wakeup_sig)
 				elif not ev_timer_set:
@@ -438,17 +437,33 @@ class PAMixerStreams(PAMixerMenu):
 					ev_timer_set = True
 			else: ev_sig_handler()
 
+		def cb_delay_iter(func, interval):
+			'Helper to run callback with specified time intervals, yielding poll delays.'
+			if not interval or interval <= 0: ts_next = None
+			else: ts_next = time.monotonic() + interval
+			while True:
+				if not ts_next:
+					yield None
+					continue
+				yield max(0, ts_next - time.monotonic())
+				ts = time.monotonic()
+				if ts > ts_next:
+					while ts > ts_next: ts_next += interval
+					func()
+
 		def poller():
 			self.pulse.event_mask_set(ev_m.sink, ev_m.sink_input)
 			self.pulse.event_callback_set(ev_cb)
+			delay_iter = cb_delay_iter(ev_cb, self.conf.force_refresh_interval)
 			while True:
 				with self._pulse_hold: self._pulse_lock.acquire() # ...threads ;(
 				if self._update_wakeup_break:
 					log.error('Stopping poller due to update_wakeup_break')
 					break
-				try: self.pulse.event_listen()
+				try: self.pulse.event_listen(next(delay_iter))
 				except PulseDisconnected:
-					ev_cb()
+					log.debug('pulsectl disconnected')
+					wakeup_handler(disconnected=True)
 					break
 				finally: self._pulse_lock.release()
 				if not poller_thread: break
@@ -816,7 +831,7 @@ class PAMixerUI:
 				except ValueError: key_name = 'unknown' # e.g. "-1"
 				break
 			if key is None: continue
-			log.debug('Keypress event: {} ({!r})', key, key_name)
+			if key != -1: log.debug('Keypress event: {} ({!r})', key, key_name)
 
 			if item_hl:
 				if key_match(key, 'up', 'k', 'p'): self.item_hl = item_hl.get_prev()
@@ -933,6 +948,7 @@ def main(args=None):
 							log.debug('Disconnected from pulse server, exiting...')
 							break
 					else: break
+					# else: break
 
 	log.debug('Finished')
 
