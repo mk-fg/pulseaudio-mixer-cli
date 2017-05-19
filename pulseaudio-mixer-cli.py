@@ -1,7 +1,7 @@
 #!/usr/bin/env python2
 from __future__ import unicode_literals, print_function
 
-import os, sys
+import os, sys, time
 
 defaults = {'adjust-step': 5, 'max-level': 2 ** 16, 'encoding': 'utf-8',
             'use-media-name': False, 'verbose': False, 'debug': False}
@@ -52,8 +52,7 @@ optz = parser.parse_args()
 
 
 import itertools as it, operator as op, functools as ft
-from subprocess import Popen, PIPE, STDOUT
-import dbus
+import dbus, subprocess
 
 if sys.version_info.major == 3:
     it.imap, unicode = map, str
@@ -65,6 +64,8 @@ log = logging.getLogger()
 if not optz.verbose and not optz.debug:
     sys.stderr.close()  # so that output won't break the interface
 
+
+get_bus_hacks_default = 'none', 'start', 'load-module'
 
 def get_bus_address():
     srv_addr = os.environ.get('PULSE_DBUS_SERVER')
@@ -79,27 +80,31 @@ def get_bus_address():
                  'Address', dbus_interface='org.freedesktop.DBus.Properties')
     return srv_addr
 
-
-def get_bus(srv_addr=None, dont_start=False):
-    while not srv_addr:
-        try:
-            srv_addr = get_bus_address()
-            log.debug('Got pa-server bus from dbus: %s', srv_addr)
-        except dbus.exceptions.DBusException as err:
-            if dont_start or srv_addr is False or\
-                    err.get_dbus_name() != 'org.freedesktop.DBus.Error.ServiceUnknown':
-                raise
-            Popen(['pulseaudio', '--start', '--log-target=syslog'],
-                  stdout=open('/dev/null', 'w'), stderr=STDOUT).wait()
-            log.debug('Started new pa-server instance')
-            ## Contrary to docs, "pulseaudio --start" does not mean shit ;(
-            from time import sleep
-            sleep(1)
-            srv_addr = False  # to avoid endless loop
-    # print(dbus.connection.Connection(srv_addr)\
-    #   .get_object(object_path='/org/pulseaudio/core1')\
-    #   .Introspect(dbus_interface='org.freedesktop.DBus.Introspectable'))
-    return dbus.connection.Connection(srv_addr)
+def get_bus(srv_addr=None, hacks=get_bus_hacks_default):
+    with open(os.devnull, 'w') as devnull:
+        run = ft.partial(subprocess.call, stdout=devnull, stderr=devnull, close_fds=True)
+        hack_last = hacks[-1]
+        for hack in hacks:
+            if hack == 'start':
+                log.debug('Init: starting pulse server')
+                run(['pulseaudio', '--start', '--log-target=syslog'])
+            if hack == 'load-module':
+                log.debug('Init: loading module-dbus-protocol')
+                run(['pactl', 'load-module', 'module-dbus-protocol'])
+            try:
+                if not srv_addr:
+                    srv_addr = get_bus_address()
+                    log.debug('Got pulse bus from session bus: %s', srv_addr)
+                conn = dbus.connection.Connection(srv_addr)
+            except dbus.exceptions.DBusException as err:
+                log.debug('----- %s', [hack, err.get_dbus_name()])
+                if hack == hack_last or err.get_dbus_name() not in [
+                      'org.freedesktop.DBus.Error.ServiceUnknown',
+                      'org.freedesktop.DBus.Error.FileNotFound' ]:
+                    raise
+            else:
+                break
+    return conn
 
 
 from io import open
@@ -159,7 +164,6 @@ else:
 ### UI backend
 
 from collections import deque
-from time import time
 import re  # for some templating
 
 
@@ -325,7 +329,7 @@ class PAMenu(dict):
             val, ts = self._volume_val_cache[item]
         except KeyError:
             val = None
-        ts_chk = time()
+        ts_chk = time.time()
         if val is None or ts < ts_chk - self._cache_time:
             try:
                 val = self._get_volume(item)
@@ -350,7 +354,7 @@ class PAMenu(dict):
             self._set_volume(item, val_dbus)
         except KeyError:
             raise PAUpdate
-        self._volume_val_cache[item] = val, time()
+        self._volume_val_cache[item] = val, time.time()
 
     @_dbus_failsafe
     def _get_mute(self, item):
@@ -362,7 +366,7 @@ class PAMenu(dict):
             val, ts = self._mute_val_cache[item]
         except KeyError:
             val = None
-        ts_chk = time()
+        ts_chk = time.time()
         if val is None or ts < ts_chk - self._cache_time:
             try:
                 val = self._get_mute(item)
@@ -383,7 +387,7 @@ class PAMenu(dict):
             self._set_mute(item, val_dbus)
         except KeyError:
             raise PAUpdate
-        self._mute_val_cache[item] = val, time()
+        self._mute_val_cache[item] = val, time.time()
 
     def next_key(self, item):
         try:

@@ -388,6 +388,8 @@ class PAMixerDBusBridge(object):
 		finally: self._child_check = False
 
 
+	_get_bus_hacks = 'none', 'start', 'load-module'
+
 	def _get_bus_address(self):
 		srv_addr = os.environ.get('PULSE_DBUS_SERVER')
 		if not srv_addr and os.access('/run/pulse/dbus-socket', os.R_OK | os.W_OK):
@@ -399,23 +401,30 @@ class PAMixerDBusBridge(object):
 						'Address', dbus_interface='org.freedesktop.DBus.Properties' )
 		return srv_addr
 
-	def _get_bus(self, srv_addr=None, dont_start=False):
-		while not srv_addr:
-			try:
-				srv_addr = self._get_bus_address()
-				log.debug('Got pa-server bus from dbus: %s', srv_addr)
-			except self._dbus.exceptions.DBusException as err:
-				if dont_start or srv_addr is False or\
-						err.get_dbus_name() != 'org.freedesktop.DBus.Error.ServiceUnknown':
-					raise
-				subprocess.Popen(
-					['pulseaudio', '--start', '--log-target=syslog'],
-					stdout=open(os.devnull, 'wb'), stderr=subprocess.STDOUT ).wait()
-				log.debug('Started new pa-server instance')
-				# from time import sleep
-				# sleep(1) # XXX: still needed?
-				srv_addr = False # to avoid endless loop
-		return self._dbus.connection.Connection(srv_addr)
+	def _get_bus(self, srv_addr=None, hacks=None):
+		if hacks is None: hacks = self._get_bus_hacks
+		with open(os.devnull, 'wb') as devnull:
+			run = ft.partial(subprocess.call, stdout=devnull, stderr=devnull, close_fds=True)
+			hack_last = hacks[-1]
+			for hack in hacks:
+				if hack == 'start':
+					log.debug('Init: starting pulse server')
+					run(['pulseaudio', '--start', '--log-target=syslog'])
+				if hack == 'load-module':
+					log.debug('Init: loading module-dbus-protocol')
+					run(['pactl', 'load-module', 'module-dbus-protocol'])
+				try:
+					if not srv_addr:
+						srv_addr = self._get_bus_address()
+						log.debug('Got pulse bus from session bus: %s', srv_addr)
+					conn = self._dbus.connection.Connection(srv_addr)
+				except self._dbus.exceptions.DBusException as err:
+					if hack == hack_last or err.get_dbus_name() not in [
+							'org.freedesktop.DBus.Error.ServiceUnknown',
+							'org.freedesktop.DBus.Error.FileNotFound' ]:
+						raise
+				else: break
+		return conn
 
 	def _dbus_val(self, args, translate=None):
 		if translate == 'volume': args[-1] = list(self._dbus.UInt32(round(v)) for v in args[-1])

@@ -126,9 +126,9 @@ If `pa-mixer-mk3.py`_ (latest) script version will be used, pulsectl_ python
 module must be installed (either via OS packaging system, or e.g. ``pip
 install --user pulsectl``).
 
-If using older scripts with dbus interface, make sure you have ``load-module
-module-dbus-protocol`` line in ``/etc/pulse/default.pa`` (or ``/etc/pulse/system.pa``,
-if system-wide daemon is used) and dbus-python package installed.
+If using older scripts with dbus interface, make sure dbus-python package
+is installed.
+module-dbus-protocol will be loaded automatically there, if necessary.
 
 Requirements (pa-mixer-mk3.py)
 ``````````````````````````````
