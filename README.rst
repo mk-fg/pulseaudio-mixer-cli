@@ -257,6 +257,15 @@ Misc hints
   or min/max thresholds by using "volume-..." settings and "reapply: true" (to
   enforce these on every volume-change event).
 
+- Stream id under which module-stream-restore saves volume can be easily
+  controlled by using e.g. ``env PULSE_PROP_media.role=music mpv ...``, so that
+  volume for app instance ("mpv" in that example) started like this stored
+  separately from any other instances.
+
+  Can be useful if same player is being run for many different purposes with
+  inherently different volume levels/requirements (e.g. same mpv/vlc/etc for
+  music, podcasts and movies).
+
 
 
 Debugging errors
