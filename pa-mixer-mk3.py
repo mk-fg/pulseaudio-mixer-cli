@@ -84,16 +84,16 @@ class Conf:
 		except KeyError: raise ValueError(val)
 
 
-def conf_read(path=None, base=None):
+def conf_read(path=None, base=None, **overrides):
 	conf, conf_file = base or Conf(),\
 		os.path.expanduser(path or conf_read.path_default)
 	try: conf_file = open(conf_file)
 	except (OSError, IOError) as err: pass
-	else: conf_update_from_file(conf, conf_file)
+	else: conf_update_from_file(conf, conf_file, overrides)
 	return conf
 conf_read.path_default = '~/.pulseaudio-mixer-cli.cfg'
 
-def conf_update_from_file(conf, path_or_file):
+def conf_update_from_file(conf, path_or_file, overrides):
 	if isinstance(path_or_file, str): path_or_file = open(path_or_file)
 	with path_or_file as src:
 		config = configparser.RawConfigParser(
@@ -108,6 +108,9 @@ def conf_update_from_file(conf, path_or_file):
 	for k in dir(conf):
 		if k.startswith('_'): continue
 		v = getattr(conf, k)
+		if k in overrides:
+			setattr(conf, k, overrides[k])
+			continue
 		if isinstance(v, str): get_val = lambda *a: str(config.get(*a))
 		elif isinstance(v, bool): get_val = config.getboolean
 		elif isinstance(v, int): get_val = config.getint
@@ -888,44 +891,63 @@ def main(args=None):
 	import argparse
 	parser = argparse.ArgumentParser(description='Command-line PulseAudio mixer tool.')
 
-	parser.add_argument('-c', '--conf',
+	group = parser.add_argument_group('Configuration file')
+	group.add_argument('-c', '--conf',
 		action='store', metavar='path', default=conf_read.path_default,
 		help='Path to configuration file to use instead'
 			' of the default one (%(default)s), can be missing or empty.')
 
-	parser.add_argument('-a', '--adjust-step',
+	group = parser.add_argument_group('Configuration overrides')
+	group.add_argument('-a', '--adjust-step',
 		type=int, metavar='step', default=conf.adjust_step,
 		help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
-	parser.add_argument('-l', '--max-level',
+	group.add_argument('-l', '--max-level',
 		type=float, metavar='volume', default=conf.max_volume,
 		help='Relative volume level to treat as max (default: %(default)s).')
-	parser.add_argument('-n', '--use-media-name',
+	group.add_argument('-n', '--use-media-name',
 		action='store_true', default=conf.use_media_name,
 		help='Display streams by "media.name" property, if possible.'
 			' Default is to prefer application name and process properties.')
-	parser.add_argument('--no-reconnect',
+	group.add_argument('--no-reconnect',
 		action='store_false', dest='reconnect', default=conf.reconnect,
 		help='Exit when pulseaudio server connection goes down.'
 			' Default is to reconnect endlessly, i.e. run until manual exit.')
 
-	parser.add_argument('-v', '--verbose',
+	group = parser.add_argument_group('Logarithmic scale conversion helpers')
+	group.add_argument('-i', '--flat-to-log', metavar='(log-base:)value',
+		help='Print value converted from flat to log (with specified base or e) scale and exit.')
+	group.add_argument('-j', '--log-to-flat', metavar='(log-base:)value',
+		help='Print value converted from log-scale (with specified base or e) to flat and exit.')
+
+	group = parser.add_argument_group('Misc/debug')
+	group.add_argument('-v', '--verbose',
 		action='store_true', default=conf.verbose,
 		help='Dont close stderr to see any sort of errors (which'
 			' mess up curses interface, thus silenced that way by default).')
-	parser.add_argument('--dump-stream-params',
+	group.add_argument('--dump-stream-params',
 		action='store_true', help='Dump all parameters for each stream to stderr.')
-	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
-	parser.add_argument('--fatal', action='store_true',
+	group.add_argument('--debug', action='store_true', help='Verbose operation mode.')
+	group.add_argument('--fatal', action='store_true',
 		help='Dont try too hard to recover from errors. For debugging purposes only.')
 
 	args = sys.argv[1:] if args is None else args
 	opts = parser.parse_args(args)
 
+	global log, print
+
+	conv = opts.flat_to_log or opts.log_to_flat
+	if conv:
+		vt, val = ('log-' + conv).split(':', 1) if ':' in conv else ('log', conv)
+		val = float(val)
+		conf = conf_read(volume_type=vt)
+		func = conf._vol_get if opts.flat_to_log else conf._vol_set
+		func_label = 'flat-to-log' if opts.flat_to_log else 'log-to-flat'
+		return print(f'{func_label} (type={vt}): {val:.2f} -> {func(val):.2f}')
+
 	if opts.conf: conf = conf_read(opts.conf)
 	for k,v in vars(opts).items(): setattr(conf, k, v)
 	del opts
 
-	global log, print
 	logging.basicConfig(
 		level=logging.DEBUG if conf.debug else logging.WARNING,
 		format='%(asctime)s :: %(threadName)s %(levelname)s :: %(message)s',
