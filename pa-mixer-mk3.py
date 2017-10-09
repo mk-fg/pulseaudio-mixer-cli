@@ -599,16 +599,15 @@ class PAMixerAtticItem(PAMixerMenuItem):
 	def volume(self):
 		'Volume as one float in 0-1 range.'
 		self.init_channels(self.obj)
-		return min(1.0, max(0,
-			self.obj.volume.value_flat - self.conf.min_volume ) / float(self.conf.max_volume))
+		val_pulse = (self.obj.volume.value_flat - self.conf.min_volume) / float(self.conf.max_volume)
+		return self.conf._vol_get(val_pulse)
 	@volume.setter
 	def volume(self, val):
 		self.init_channels(self.obj)
-		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
+		val_pulse = self.conf._vol_set(val) * self.conf.max_volume + self.conf.min_volume
 		log.debug('Setting stream_restore volume: {} (pulse: {}) for {}', val, val_pulse, self)
 		self.obj.volume.value_flat = val_pulse
-		with self.menu.pulse_ctx() as pulse:
-			pulse.stream_restore_write(self.obj, mode='replace')
+		with self.menu.pulse_ctx() as pulse: pulse.stream_restore_write(self.obj, mode='replace')
 
 	def special_action(self, key, key_match):
 		if key_match(key, 'enter', '\n'):
