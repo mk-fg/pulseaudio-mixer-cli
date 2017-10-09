@@ -62,7 +62,7 @@ Features (pa-mixer-mk3.py)
   number of pulse streams or event floods, pulse server dying and restarting, etc.
 
 - Configurable UI behavior (e.g. focus policy, names, etc), volume range to
-  control, adjustment step.
+  control, adjustment step, non-linear adjustment.
 
 - Automation features (through config file) for matching streams and
   auto-adjusting/limiting their volume, sink ports, rename/hide in the UI,
@@ -234,8 +234,6 @@ be easy to choose how to match these.
 
 See more info on stream matching and parameters in `pa-mixer.example.cfg`_.
 
-.. _pa-mixer.example.cfg: pa-mixer.example.cfg
-
 
 Misc hints
 ``````````
@@ -257,14 +255,29 @@ Misc hints
   or min/max thresholds by using "volume-..." settings and "reapply: true" (to
   enforce these on every volume-change event).
 
-- Stream id under which module-stream-restore saves volume can be easily
-  controlled by using e.g. ``env PULSE_PROP_media.role=music mpv ...``, so that
-  volume for app instance ("mpv" in that example) started like this stored
-  separately from any other instances.
+- ``/etc/pulse/daemon.conf`` has important "flat-volumes" option that controls
+  whether to use same scale for all volume bars ("yes") or apply them on top of
+  each other ("no"), which usually has distro-specific default value.
+
+  That option is the reason why sink volume might be increased automatically
+  when adjusting level for specific stream/app.
+
+- Stream id under which pulseaudio module-stream-restore saves volume can be
+  easily controlled by using e.g. ``env PULSE_PROP_media.role=music mpv ...``,
+  so that volume for app instance ("mpv" in that example) started like this
+  stored separately from any other instances.
 
   Can be useful if same player is being run for many different purposes with
   inherently different volume levels/requirements (e.g. same mpv/vlc/etc for
   music, podcasts and movies).
+
+- To have more precise control over lower end of specified volume range without
+  having to limit the range itself, "volume-type = log" option (base=e
+  logarithmic scale) can be used , with higher-base values ("log-N") giving even
+  more control there.
+
+  | With e.g. "volume-type = log-15", 50% volume will be at ``[ ############--- ]``.
+  | See `pa-mixer.example.cfg`_ for more details.
 
 
 
@@ -299,3 +312,7 @@ Other similar projects
 - pavucontrol that comes with pulse has good GUI (for GNOME/X11 and such).
 
 Not an exhaustive list by any means.
+
+
+
+.. _pa-mixer.example.cfg: pa-mixer.example.cfg

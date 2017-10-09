@@ -4,7 +4,7 @@ import itertools as it, operator as op, functools as ft
 from collections import OrderedDict, defaultdict, deque, namedtuple
 from contextlib import contextmanager
 import os, sys, io, re, time, logging, configparser
-import base64, hashlib, unicodedata
+import base64, hashlib, unicodedata, math
 import signal, threading
 
 from pulsectl import (
@@ -45,6 +45,7 @@ class Conf:
 	# Volume values are relative to "normal" (non-soft-boosted) pulseaudio volume
 	max_volume = 1.0 # relative value, displayed as "100%"
 	min_volume = 0.01 # relative value, displayed as "0%"
+	volume_type = 'flat' # 'flat', 'log' (base=e) or 'log-N' where N is logarithm base (int/float)
 
 	use_device_name = False
 	use_media_name = False
@@ -60,7 +61,7 @@ class Conf:
 	show_stored_values = True
 	show_controls = True
 
-	stream_params = None
+	stream_params = stream_params_reapply = None
 	broken_chars_replace = '_'
 	focus_default = 'first' # either "first" or "last"
 	focus_new_items = True
@@ -71,6 +72,9 @@ class Conf:
 	# Whether to wrap focus when going past first/last item
 	focus_wrap_first = False
 	focus_wrap_last = False
+
+	# These are set for volume_type
+	_vol_set = _vol_get = staticmethod(lambda v: min(1.0, max(0, v)))
 
 	@staticmethod
 	def parse_bool(val, _states={
@@ -112,6 +116,15 @@ def conf_update_from_file(conf, path_or_file):
 		for k_conf in k, k.replace('_', '-'):
 			try: setattr(conf, k, get_val('default', k_conf))
 			except configparser.Error: pass
+
+	if conf.volume_type != 'flat':
+		if conf.volume_type == 'log': vol_log_base = math.e
+		elif conf.volume_type.startswith('log-'):
+			vol_log_base = max(1.0000001, float(conf.volume_type.split('-', 1)[-1]))
+		else: raise ValueError(f'Unrecognized volume_type value: {conf.volume_type!r}')
+		_vol_cap = conf._vol_get
+		conf._vol_get = lambda v,b=vol_log_base,c=_vol_cap: c(math.log(v * (b - 1) + 1, b))
+		conf._vol_set = lambda v,b=vol_log_base,c=_vol_cap: (b ** c(v) - 1) / (b - 1)
 
 	conf.stream_params = OrderedDict(conf.stream_params or dict())
 	conf.stream_params_reapply = list() # ones to re-apply on every event
@@ -296,11 +309,11 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 	@property
 	def volume(self):
 		'Volume as one float in 0-1 range.'
-		return min(1.0, max(0,
-			self.obj.volume.value_flat - self.conf.min_volume ) / float(self.conf.max_volume))
+		val_pulse = (self.obj.volume.value_flat - self.conf.min_volume) / float(self.conf.max_volume)
+		return self.conf._vol_get(val_pulse)
 	@volume.setter
 	def volume(self, val):
-		val_pulse = min(1.0, max(0, val)) * self.conf.max_volume + self.conf.min_volume
+		val_pulse = self.conf._vol_set(val) * self.conf.max_volume + self.conf.min_volume
 		log.debug('Setting volume: {} (pulse: {}) for {}', val, val_pulse, self)
 		with self.menu.update_wakeup() as pulse: pulse.volume_set_all_chans(self.obj, val_pulse)
 
