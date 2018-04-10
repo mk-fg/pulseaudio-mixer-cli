@@ -126,9 +126,9 @@ If `pa-mixer-mk3.py`_ (latest) script version will be used, pulsectl_ python
 module must be installed (either via OS packaging system, or e.g. ``pip
 install --user pulsectl``).
 
-If using older scripts with dbus interface, make sure dbus-python package
-is installed.
-module-dbus-protocol will be loaded automatically there, if necessary.
+| If using older scripts with dbus interface, make sure dbus-python package is installed.
+| module-dbus-protocol will be loaded automatically there, if necessary.
+| Thse use dbus only and don't need pulsectl module, unlike mk3 version.
 
 Requirements (pa-mixer-mk3.py)
 ``````````````````````````````
@@ -177,13 +177,22 @@ Keyboard controls are:
 - "x" to toggle display between current sink/stream volumes and ones in
   module-stream-restore db (if used/accessible).
 
+- Current volumes tab only:
+
+  - "i" to show proplist for the selected item, i.e. stuff that can be used to
+    match it via config file.
+
 - module-stream-restore tab only:
 
   - "d" to remove (i.e. forget) stored value for stream/role.
 
   - "enter" to apply selected value to active streams.
 
-Supposed to mimic ones in alsamixer and be somewhat intuitive, hardcoded.
+Keys for rare/special actions (such as "x", "i", "d" and such) should also be
+shown at the bottom line, unless disabled via config ("show-controls" option).
+
+Supposed to mimic controls in alsamixer and be somewhat intuitive, hardcoded.
+
 
 
 Config file
@@ -228,9 +237,11 @@ match sound from firefox by "application.name" and set more descriptive name
 there, as well as cap initial volume level for these at "0.2" (lower to this
 value if it is set higher initially).
 
+Pressing "i" key will show all parameters (pulse proplist) for selected item.
+
 Running ``./pa-mixer-mk3.py --dump-stream-parameters 2>stream_params.txt`` will
 dump such parameters for all seen streams to "stream_params.txt", so that it'd
-be easy to choose how to match these.
+be easy to choose how to match these, and will catch any transient streams.
 
 See more info on stream matching and parameters in `pa-mixer.example.cfg`_.
 

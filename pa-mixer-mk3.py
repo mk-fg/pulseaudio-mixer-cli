@@ -147,7 +147,8 @@ def conf_update_from_file(conf, path_or_file, overrides):
 
 class PAMixerMenuItem:
 
-	name, volume, muted, menu = '???', 0, False, None
+	name, volume, muted = '', 0, False
+	menu = uid = text = None
 
 	def muted_toggle(self): self.muted = not self.muted
 	def volume_change(self, delta):
@@ -155,8 +156,10 @@ class PAMixerMenuItem:
 		self.volume += delta
 	def special_action(self, key, key_match): pass
 
-	def get_next(self, m=1): return self.menu.item_after(self, m=m)
-	def get_prev(self, m=1): return self.menu.item_before(self, m=m)
+	def get_next(self, m=1):
+		return self.menu.item_after(self, m=m) if self.menu else self
+	def get_prev(self, m=1):
+		return self.menu.item_before(self, m=m) if self.menu else self
 
 class PAMixerMenu:
 
@@ -215,6 +218,8 @@ class PAMixerEvent:
 	def __str__(self): return repr(dict((k, getattr(self, k)) for k in self.__slots__))
 
 class PAMixerStreamsItem(PAMixerMenuItem):
+
+	name = '???'
 
 	def __init__(self, streams, obj_t, obj_id, obj):
 		self.menu, self.conf = streams, streams.conf
@@ -320,6 +325,12 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 		log.debug('Setting volume: {} (pulse: {}) for {}', val, val_pulse, self)
 		with self.menu.update_wakeup() as pulse: pulse.volume_set_all_chans(self.obj, val_pulse)
 
+	def special_action(self, ui, key):
+		if ui.key_match(key, 'i'):
+			with self.menu.update_wakeup() as pulse:
+				ui.info = PAMixerStreamInfo(self.obj.proplist)
+			ui.mode_switch('info')
+
 	@property
 	def port(self):
 		if self.t != 'sink': return
@@ -333,6 +344,8 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 
 
 class PAMixerStreams(PAMixerMenu):
+
+	controls = dict(i='show item info')
 
 	def __init__(self, pulse, conf=None, fatal=False):
 		self.pulse, self.fatal, self.conf = pulse, fatal, conf or Conf()
@@ -566,8 +579,7 @@ class PAMixerStreams(PAMixerMenu):
 
 class PAMixerAtticItem(PAMixerMenuItem):
 
-	name_prefix_subst = {
-		'application-name': 'app-name' }
+	name, name_prefix_subst = '???', {'application-name': 'app-name'}
 
 	def __init__(self, attic, obj):
 		self.menu, self.conf, self.obj = attic, attic.conf, obj
@@ -609,12 +621,12 @@ class PAMixerAtticItem(PAMixerMenuItem):
 		self.obj.volume.value_flat = val_pulse
 		with self.menu.pulse_ctx() as pulse: pulse.stream_restore_write(self.obj, mode='replace')
 
-	def special_action(self, key, key_match):
-		if key_match(key, 'enter', '\n'):
+	def special_action(self, ui, key):
+		if ui.key_match(key, 'enter', '\n'):
 			log.debug('Applying stream_restore volume for: {}', self)
 			with self.menu.pulse_ctx() as pulse:
 				pulse.stream_restore_write(self.obj, mode='replace', apply_immediately=True)
-		if key_match(key, 'd'):
+		if ui.key_match(key, 'd'):
 			with self.menu.pulse_ctx() as pulse:
 				pulse.stream_restore_delete(self.obj.name)
 			del self.menu.item_dict[self.name]
@@ -644,6 +656,23 @@ class PAMixerAttic(PAMixerMenu):
 		return list(self.item_dict.values())
 
 
+class PAMixerInfoItem(PAMixerMenuItem):
+
+	def __init__(self, menu, n=0, name='', text=''):
+		self.menu, self.uid, self.name, self.text = menu, n, name, text
+	def __hash__(self): return hash(f'<InfoItem:{self.uid}>')
+	def __eq__(self, o): return isinstance(o, PAMixerInfoItem) and self.uid == o.uid
+
+
+class PAMixerStreamInfo(PAMixerMenu):
+
+	def __init__(self, proplist):
+		self.pos, self.proplist = 0, proplist
+		self.items = list()
+		for n, (k, v) in enumerate(sorted(self.proplist.items())):
+			self.items.append(PAMixerInfoItem(self, n, k, v))
+
+
 
 PAMixerUIFit = namedtuple('PAMixerUIFit', 'rows controls')
 
@@ -654,11 +683,11 @@ class PAMixerUI:
 	bar_caps_func = staticmethod(lambda bar='': ' [ ' + bar + ' ]')
 	border = 1
 	name_cut_funcs = dict(left=lambda n,c: n[max(0, len(n) - c):], right=lambda n,c: n[:c])
-	mode_opts = {'streams', 'attic'}
+	mode_opts = ['streams', 'attic']
 	mode_desc = dict(streams='active sinks/streams', attic='stored stream volumes')
 
 	def __init__(self, streams, attic, conf=None):
-		self.streams, self.attic, self.conf = streams, attic, conf or Conf()
+		self.streams, self.attic, self.info, self.conf = streams, attic, None, conf or Conf()
 		self.mode = 'streams'
 
 	def __enter__(self):
@@ -746,8 +775,14 @@ class PAMixerUI:
 			attrs = self.c.A_REVERSE if item is item_hl else self.c.A_NORMAL
 			name_len = item_len_max - bool(self.conf.name_show_level) * level_len
 			name = self.name_cut_funcs[self.conf.name_cut_from](item.name, name_len)
+			text_item = item.text is not None
 
-			if self.conf.name_show_level:
+			if not item.name and text_item:
+				addstr(row, 0, ' ' * pad_x)
+				addstr(row, pad_x, item.text[:win_len], attrs)
+				continue
+
+			if self.conf.name_show_level and not text_item:
 				level = max(0, min(100, int(round(item.volume * 100))))
 				if level == 0: level = '--'
 				elif level == 100: level = '++'
@@ -757,15 +792,21 @@ class PAMixerUI:
 			addstr(row, 0, ' ' * pad_x)
 			addstr(row, pad_x, name, attrs)
 			item_name_end = item_len_max + pad_x
+
+			if text_item:
+				text = item.text[:max(0, win_len - item_name_end)]
+				addstr(row, item_name_end, text, attrs)
+				continue
+
 			if win_len > item_name_end + mute_button_len:
 				if item.muted: mute_button = ' M'
 				else: mute_button = ' -'
 				addstr(row, item_name_end, mute_button)
+				if bar_len <= 0: continue
 
-				if bar_len > 0:
-					bar_fill = int(round(item.volume * bar_len))
-					bar = self.bar_caps_func('#' * bar_fill + '-' * (bar_len - bar_fill))
-					addstr(row, item_name_end + mute_button_len, bar)
+			bar_fill = int(round(item.volume * bar_len))
+			bar = self.bar_caps_func('#' * bar_fill + '-' * (bar_len - bar_fill))
+			addstr(row, item_name_end + mute_button_len, bar)
 
 		if draw_controls:
 			addstr(win_rows, pad_x, '')
@@ -783,7 +824,9 @@ class PAMixerUI:
 	_item_hl = _item_hl_ts = None
 
 	def mode_switch(self, mode=None, dry_run=False):
-		if not mode: mode = self.mode_opts.difference([self.mode]).pop()
+		if not mode:
+			for mode in self.mode_opts:
+				if mode != self.mode: break
 		if not dry_run and getattr(self, mode, None):
 			log.debug('Switching display mode: {} -> {}', self.mode, mode)
 			self.mode = mode
@@ -807,9 +850,11 @@ class PAMixerUI:
 		self._item_hl, self._item_hl_ts = item, time.monotonic()
 
 
+	def key_match(self, key,*choices):
+		return key in map(self.c_key, choices)
+
 	def _run(self, stdscr):
 		c, self.c_stdscr = self.c, stdscr
-		key_match = lambda key,*choices: key in map(self.c_key, choices)
 
 		c.curs_set(0)
 		c.use_default_colors()
@@ -826,7 +871,7 @@ class PAMixerUI:
 				except ValueError: item_hl = None
 			if not item_hl:
 				item_hl = self.item_hl = self.menu.item_default(item_hl_n.get(self.mode))
-				if item_hl: item_hl_n[self.mode]= items.index(item_hl)
+				if item_hl: item_hl_n[self.mode] = items.index(item_hl)
 
 			controls = OrderedDict()
 			if self.conf.show_controls:
@@ -847,35 +892,35 @@ class PAMixerUI:
 				break
 			if key is None: continue
 			if key != -1: log.debug('Keypress event: {} ({!r})', key, key_name)
+			key_match = lambda *choices: self.key_match(key, *choices)
 
-			if item_hl:
-				if key_match(key, 'up', 'k', 'p'): self.item_hl = item_hl.get_prev()
-				elif key_match(key, 'down', 'j', 'n'): self.item_hl = item_hl.get_next()
-				elif key_match(key, 'left', 'h', 'b'): item_hl.volume_change(-adjust_step)
-				elif key_match(key, 'right', 'l', 'f'): item_hl.volume_change(adjust_step)
-				elif key_match(key, 'ppage'): self.item_hl = item_hl.get_prev(fit.rows)
-				elif key_match(key, 'npage'): self.item_hl = item_hl.get_next(fit.rows)
-				elif key_match(key, 'home'): self.item_hl = self.menu.item_shift(t='first')
-				elif key_match(key, 'end'): self.item_hl = self.menu.item_shift(t='last')
-				elif key_match(key, ' ', 'm'): item_hl.muted_toggle()
+			if item_hl: # item-specific actions
+				if key_match('up', 'k', 'p'): self.item_hl = item_hl.get_prev()
+				elif key_match('down', 'j', 'n'): self.item_hl = item_hl.get_next()
+				elif key_match('left', 'h', 'b'): item_hl.volume_change(-adjust_step)
+				elif key_match('right', 'l', 'f'): item_hl.volume_change(adjust_step)
+				elif key_match('ppage'): self.item_hl = item_hl.get_prev(fit.rows)
+				elif key_match('npage'): self.item_hl = item_hl.get_next(fit.rows)
+				elif key_match('home'): self.item_hl = self.menu.item_shift(t='first')
+				elif key_match('end'): self.item_hl = self.menu.item_shift(t='last')
+				elif key_match(' ', 'm'): item_hl.muted_toggle()
 				elif key_name.isdigit(): # 1-0 keyboard row
 					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
+				elif key > 0: item_hl.special_action(self, key) # usually no-op
 
-				elif key > 0: item_hl.special_action(key, key_match) # usually no-op
-				elif key < 0: # signal - usually from pulse events
-					for k in self.mode_opts:
-						menu = getattr(self, k)
-						if menu: menu.update(incremental=True)
-
-			if key_match(key, 'resize'):
+			if key_match('resize'):
 				if self.conf.overkill_redraw:
 					c.endwin()
 					stdscr.refresh()
 					win = self.c_win_init()
 				else:
 					win.resize(*win.getmaxyx())
-			elif key_match(key, 'x'): self.mode_switch()
-			elif key_match(key, 'q'): break
+			elif key_match('x'): self.mode_switch()
+			elif key_match('q'): break
+			elif key < 0: # signal - usually from pulse events
+				for menu in set([self.menu, *(getattr(self, k) for k in self.mode_opts)]):
+					if menu: menu.update(incremental=True)
+
 
 	def run(self):
 		import locale, curses # has a ton of global state
