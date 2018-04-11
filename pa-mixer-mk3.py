@@ -664,8 +664,13 @@ class PAMixerInfoItem(PAMixerMenuItem):
 	def __hash__(self): return hash(f'<InfoItem:{self.uid}>')
 	def __eq__(self, o): return isinstance(o, PAMixerInfoItem) and self.uid == o.uid
 
+	def special_action(self, ui, key):
+		if ui.key_match(key, 'i'): ui.mode_switch()
+
 
 class PAMixerStreamInfo(PAMixerMenu):
+
+	controls = dict(i='back')
 
 	def __init__(self, proplist):
 		self.pos, self.proplist = 0, proplist
