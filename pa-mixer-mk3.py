@@ -63,19 +63,30 @@ class Conf:
 	show_controls = True
 
 	stream_params = stream_params_reapply = None
-	broken_chars_replace = '_'
+	char_name_replace_broken = '_'
+	char_bar_fill = '#'
+	char_bar_empty = '-'
+	char_bar_softvol = 'X'
+
 	focus_default = 'first' # either "first" or "last"
 	focus_new_items = True
 	focus_new_items_delay = 5.0 # min seconds since last focus change to trigger this
-	event_proc_delay = 0.0 # 0 - disable
-	force_refresh_interval = 0.0 # 0 or negative - disable
 
 	# Whether to wrap focus when going past first/last item
 	focus_wrap_first = False
 	focus_wrap_last = False
 
-	# These are set for volume_type
-	_vol_set = _vol_get = staticmethod(lambda v: min(1.0, max(0, v)))
+	event_proc_delay = 0.0 # 0 - disable
+	force_refresh_interval = 0.0 # 0 or negative - disable
+
+	# These are set for volume_type and operate on normalized (mixer) 0-1.0 values
+	_vol_type_set = _vol_type_get = staticmethod(lambda v: min(1.0, max(0, v)))
+
+	# Volume calculation funcs convert pulse -> mixer values (get) or vice-versa (set)
+	_vol_calc_get = lambda conf, vol_pulse: conf._vol_type_get(
+			(vol_pulse - conf.min_volume) / (conf.max_volume - conf.min_volume) )
+	_vol_calc_set = ( lambda conf, vol:
+		conf._vol_type_set(vol) * (conf.max_volume - conf.min_volume) + conf.min_volume )
 
 	@staticmethod
 	def parse_bool(val, _states={
@@ -126,9 +137,9 @@ def conf_update_from_file(conf, path_or_file, overrides):
 		elif conf.volume_type.startswith('log-'):
 			vol_log_base = max(1.0000001, float(conf.volume_type.split('-', 1)[-1]))
 		else: raise ValueError(f'Unrecognized volume_type value: {conf.volume_type!r}')
-		_vol_cap = conf._vol_get
-		conf._vol_get = lambda v,b=vol_log_base,c=_vol_cap: c(math.log(v * (b - 1) + 1, b))
-		conf._vol_set = lambda v,b=vol_log_base,c=_vol_cap: (b ** c(v) - 1) / (b - 1)
+		_vol_cap = conf._vol_type_get
+		conf._vol_type_get = lambda v,b=vol_log_base,c=_vol_cap: c(math.log(v * (b - 1) + 1, b))
+		conf._vol_type_set = lambda v,b=vol_log_base,c=_vol_cap: (b ** c(v) - 1) / (b - 1)
 
 	conf.stream_params = OrderedDict(conf.stream_params or dict())
 	conf.stream_params_reapply = list() # ones to re-apply on every event
@@ -259,7 +270,7 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 	def _get_name_descriptive(self):
 		'Can probably fail with KeyError if something is really wrong with stream/device props.'
 		ext, props = None, dict(
-			(k, self._strip_noise_bytes(v, self.conf.broken_chars_replace))
+			(k, self._strip_noise_bytes(v, self.conf.char_name_replace_broken))
 			for k, v in self.obj.proplist.items() )
 
 		if self.t == 'stream':
@@ -318,12 +329,14 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 	@property
 	def volume(self):
 		'Volume as one float in 0-1 range.'
-		val_pulse = (self.obj.volume.value_flat - self.conf.min_volume) / float(self.conf.max_volume)
-		return self.conf._vol_get(val_pulse)
+		return self.conf._vol_calc_get(self.obj.volume.value_flat)
 	@volume.setter
 	def volume(self, val):
-		val_pulse = self.conf._vol_set(val) * self.conf.max_volume + self.conf.min_volume
+		val_pulse = self.conf._vol_calc_set(val)
 		log.debug('Setting volume: {} (pulse: {}) for {}', val, val_pulse, self)
+		# log.debug(
+		# 	'Volume: [mixer: {:.4f} -> {:.4f}] [pulse: {:.4f} -> {:.4f}]',
+		# 	self.volume, val, self.obj.volume.value_flat, val_pulse )
 		with self.menu.update_wakeup() as pulse: pulse.volume_set_all_chans(self.obj, val_pulse)
 
 	def special_action(self, ui, key):
@@ -610,14 +623,12 @@ class PAMixerAtticItem(PAMixerMenuItem):
 
 	@property
 	def volume(self):
-		'Volume as one float in 0-1 range.'
 		self.init_channels(self.obj)
-		val_pulse = (self.obj.volume.value_flat - self.conf.min_volume) / float(self.conf.max_volume)
-		return self.conf._vol_get(val_pulse)
+		return self.conf._vol_calc_get(self.obj.volume.value_flat)
 	@volume.setter
 	def volume(self, val):
 		self.init_channels(self.obj)
-		val_pulse = self.conf._vol_set(val) * self.conf.max_volume + self.conf.min_volume
+		val_pulse = self.conf._vol_calc_set(val)
 		log.debug('Setting stream_restore volume: {} (pulse: {}) for {}', val, val_pulse, self)
 		self.obj.volume.value_flat = val_pulse
 		with self.menu.pulse_ctx() as pulse: pulse.stream_restore_write(self.obj, mode='replace')
@@ -695,6 +706,18 @@ class PAMixerUI:
 	def __init__(self, streams, attic, conf=None):
 		self.streams, self.attic, self.info, self.conf = streams, attic, None, conf or Conf()
 		self.mode = 'streams'
+
+		log.debug( 'Volume - config/pulse: vol-min={}, vol-max={}, vol-type={}',
+			conf.min_volume, conf.max_volume, conf.volume_type )
+		log.debug( 'Volume - bar/mixer: vol-min={}, vol-max={}, softvol={:.3f}',
+			conf._vol_calc_get(conf.min_volume),
+			conf._vol_calc_get(conf.max_volume), conf._vol_calc_get(1.0) )
+		log.debug( 'Volume - mixer-to-pulse: {}',
+			', '.join('{}%={:.2f}'.format(n*10, conf._vol_calc_set(n*0.1)) for n in range(11)) )
+		# vol_pulse0 = 0.5844
+		# vol_bar = conf._vol_calc_get(vol_pulse0)
+		# vol_pulse1 = conf._vol_calc_set(vol_bar)
+		# log.debug('Volume - calc-sanity-check: {} == {}', vol_pulse0, vol_pulse1)
 
 	def __enter__(self):
 		self.c = None
@@ -811,7 +834,13 @@ class PAMixerUI:
 				if bar_len <= 0: continue
 
 			bar_fill = int(round(item.volume * bar_len))
-			bar = self.bar_caps_func('#' * bar_fill + '-' * (bar_len - bar_fill))
+			bar = list( self.conf.char_bar_fill * bar_fill
+				+ self.conf.char_bar_empty * (bar_len - bar_fill) )
+			if self.conf.char_bar_softvol != self.conf.char_bar_fill:
+				sv_c, sv_thresh = self.conf.char_bar_softvol, self.conf._vol_calc_get(1.0)
+				if item.volume > sv_thresh:
+					for n in range(round(sv_thresh * bar_len), bar_fill): bar[n] = sv_c
+			bar = self.bar_caps_func(''.join(bar))
 			addstr(row, item_name_end + mute_button_len, bar)
 
 		if draw_controls:
@@ -911,7 +940,7 @@ class PAMixerUI:
 				elif key_match('end'): self.item_hl = self.menu.item_shift(t='last')
 				elif key_match(' ', 'm'): item_hl.muted_toggle()
 				elif key_name.isdigit(): # 1-0 keyboard row
-					item_hl.volume = (float(key_name) or 10.0) / 10 # 0 is 100%
+					item_hl.volume = (int(key_name) or 10) / 10 # 0 is 100%
 				elif key > 0: item_hl.special_action(self, key) # usually no-op
 
 			if key_match('resize'):
@@ -990,7 +1019,7 @@ def main(args=None):
 		vt, val = ('log-' + conv).split(':', 1) if ':' in conv else ('log', conv)
 		val = float(val)
 		conf = conf_read(volume_type=vt)
-		func = conf._vol_get if opts.flat_to_log else conf._vol_set
+		func = conf._vol_type_get if opts.flat_to_log else conf._vol_type_set
 		func_label = 'flat-to-log' if opts.flat_to_log else 'log-to-flat'
 		return print(f'{func_label} (type={vt}): {val:.2f} -> {func(val):.2f}')
 
