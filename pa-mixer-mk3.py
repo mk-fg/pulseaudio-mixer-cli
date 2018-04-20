@@ -874,15 +874,18 @@ class PAMixerUI:
 	@property
 	def item_hl(self):
 		if self._item_hl and self.conf.focus_new_items:
-			ts = self._item_hl_ts
-			if ts: ts += self.conf.focus_new_items_delay or 0
-			item = self.menu.item_newer(ts)
+			item = self.menu.item_newer(
+				(self._item_hl_ts or 0) + (self.conf.focus_new_items_delay or 0) )
 			if item: self._item_hl = item
 		return self._item_hl
 
 	@item_hl.setter
 	def item_hl(self, item):
-		self._item_hl, self._item_hl_ts = item, time.monotonic()
+		self._item_hl = item
+		self.item_hl_ts_update()
+
+	def item_hl_ts_update(self):
+		self._item_hl_ts = time.monotonic()
 
 
 	def key_match(self, key,*choices):
@@ -932,8 +935,12 @@ class PAMixerUI:
 			if item_hl: # item-specific actions
 				if key_match('up', 'k', 'p'): self.item_hl = item_hl.get_prev()
 				elif key_match('down', 'j', 'n'): self.item_hl = item_hl.get_next()
-				elif key_match('left', 'h', 'b'): item_hl.volume_change(-adjust_step)
-				elif key_match('right', 'l', 'f'): item_hl.volume_change(adjust_step)
+				elif key_match('left', 'h', 'b'):
+					item_hl.volume_change(-adjust_step)
+					self.item_hl_ts_update() # make sure to keep focus while changing volume
+				elif key_match('right', 'l', 'f'):
+					item_hl.volume_change(adjust_step)
+					self.item_hl_ts_update()
 				elif key_match('ppage'): self.item_hl = item_hl.get_prev(fit.rows)
 				elif key_match('npage'): self.item_hl = item_hl.get_next(fit.rows)
 				elif key_match('home'): self.item_hl = self.menu.item_shift(t='first')
