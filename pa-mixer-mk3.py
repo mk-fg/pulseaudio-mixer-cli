@@ -516,6 +516,7 @@ class PAMixerStreams(PAMixerMenu):
 		try: yield poller_thread
 		finally:
 			self.pulse.event_listen_stop()
+			signal.setitimer(signal.ITIMER_REAL, 0)
 			poller_thread, t = None, poller_thread
 			# if t.is_alive(): t.join()
 			# time.sleep(0.5)
