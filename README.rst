@@ -209,10 +209,10 @@ For example::
   [default]
   adjust-step: 2
   max-volume: 1.3
-  use-media-name: true
+  use-media-name: yes
   focus-default: last
-  focus-new-items: false
-  show-controls: false
+  focus-new-items: no
+  show-controls: no
 
 Such config is totally optional, and might be useful in case default options
 aren't suitable for a specific setup.
@@ -225,7 +225,7 @@ sink ports, and such) to individual sinks/streams, for example::
 
   [stream-sink-hdmi]
   match[alsa.id]: ^HDMI\b
-  hidden: true
+  hidden: yes
 
   [stream-firefox-media]
   equals[application.name]: CubebUtils
@@ -289,6 +289,9 @@ Misc hints
 
   | With e.g. "volume-type = log-15", 50% volume will be at ``[ ############--- ]``.
   | See `pa-mixer.example.cfg`_ for more details.
+
+- "volume-after-max = yes" can be used to allow effectively infinite volume range,
+  if source is occasionally way too low for any reasonable min/max settings.
 
 
 

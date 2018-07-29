@@ -7,8 +7,7 @@ import os, sys, io, re, time, logging, configparser
 import base64, hashlib, unicodedata, math
 import signal, threading
 
-from pulsectl import (
-	Pulse,
+from pulsectl import ( Pulse,
 	PulseEventTypeEnum as ev_t, PulseEventFacilityEnum as ev_fac, PulseEventMaskEnum as ev_m,
 	PulseLoopStop, PulseDisconnected, PulseIndexError )
 
@@ -46,6 +45,7 @@ class Conf:
 	max_volume = 1.0 # relative value, displayed as "100%"
 	min_volume = 0.01 # relative value, displayed as "0%"
 	volume_type = 'flat' # 'flat', 'log' (base=e) or 'log-N' where N is logarithm base (int/float)
+	volume_after_max = False # whether volume is allowed to be raised beyond max value manually
 
 	use_device_name = False
 	use_media_name = False
@@ -80,7 +80,8 @@ class Conf:
 	force_refresh_interval = 0.0 # 0 or negative - disable
 
 	# These are set for volume_type and operate on normalized (mixer) 0-1.0 values
-	_vol_type_set = _vol_type_get = staticmethod(lambda v: min(1.0, max(0, v)))
+	_vol_cap = staticmethod(lambda v: min(1.0, max(0, v)))
+	_vol_type_set = _vol_type_get = lambda s,v: s._vol_cap(v)
 
 	# Volume calculation funcs convert pulse -> mixer values (get) or vice-versa (set)
 	_vol_calc_get = lambda conf, vol_pulse: conf._vol_type_get(
@@ -132,14 +133,16 @@ def conf_update_from_file(conf, path_or_file, overrides):
 			try: setattr(conf, k, get_val('default', k_conf))
 			except configparser.Error: pass
 
+	if conf.volume_after_max:
+		conf._vol_cap = lambda v: max(0, v)
+
 	if conf.volume_type != 'flat':
 		if conf.volume_type == 'log': vol_log_base = math.e
 		elif conf.volume_type.startswith('log-'):
 			vol_log_base = max(1.0000001, float(conf.volume_type.split('-', 1)[-1]))
 		else: raise ValueError(f'Unrecognized volume_type value: {conf.volume_type!r}')
-		_vol_cap = conf._vol_type_get
-		conf._vol_type_get = lambda v,b=vol_log_base,c=_vol_cap: c(math.log(v * (b - 1) + 1, b))
-		conf._vol_type_set = lambda v,b=vol_log_base,c=_vol_cap: (b ** c(v) - 1) / (b - 1)
+		conf._vol_type_get = lambda v,b=vol_log_base: conf._vol_cap(math.log(v * (b - 1) + 1, b))
+		conf._vol_type_set = lambda v,b=vol_log_base: (b ** conf._vol_cap(v) - 1) / (b - 1)
 
 	conf.stream_params = OrderedDict(conf.stream_params or dict())
 	conf.stream_params_reapply = list() # ones to re-apply on every event
@@ -812,10 +815,11 @@ class PAMixerUI:
 				addstr(row, pad_x, item.text[:win_len], attrs)
 				continue
 
+			volume = max(0, min(1.0, item.volume))
 			if self.conf.name_show_level and not text_item:
-				level = max(0, min(100, int(round(item.volume * 100))))
-				if level == 0: level = '--'
-				elif level == 100: level = '++'
+				level = int(round(volume * 100))
+				if level <= 0: level = '--'
+				elif level >= 100: level = '++'
 				else: level = '{:>2d}'.format(level)
 				name = '[{}] {}'.format(level, name)
 
@@ -834,12 +838,12 @@ class PAMixerUI:
 				addstr(row, item_name_end, mute_button)
 				if bar_len <= 0: continue
 
-			bar_fill = int(round(item.volume * bar_len))
+			bar_fill = int(round(volume * bar_len))
 			bar = list( self.conf.char_bar_fill * bar_fill
 				+ self.conf.char_bar_empty * (bar_len - bar_fill) )
 			if self.conf.char_bar_softvol != self.conf.char_bar_fill:
 				sv_c, sv_thresh = self.conf.char_bar_softvol, self.conf._vol_calc_get(1.0)
-				if item.volume > sv_thresh:
+				if volume > sv_thresh:
 					for n in range(round(sv_thresh * bar_len), bar_fill): bar[n] = sv_c
 			bar = self.bar_caps_func(''.join(bar))
 			addstr(row, item_name_end + mute_button_len, bar)
