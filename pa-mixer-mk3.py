@@ -112,7 +112,7 @@ def conf_update_from_file(conf, path_or_file, overrides):
 	with path_or_file as src:
 		config = configparser.RawConfigParser(
 			allow_no_value=True, inline_comment_prefixes=(';',) )
-		try: config.readfp(src)
+		try: config.read_file(src)
 		except configparser.MissingSectionHeaderError:
 			src.seek(0)
 			src = src.read()
