@@ -117,7 +117,7 @@ def conf_update_from_file(conf, path_or_file, overrides):
 			src.seek(0)
 			src = src.read()
 			src = io.StringIO('[default]' + ('\r\n' if '\r\n' in src else '\n') + src)
-			config.readfp(src)
+			config.read_file(src)
 
 	for k in dir(conf):
 		if k.startswith('_'): continue
