@@ -559,7 +559,7 @@ class PAMixerStreams(PAMixerMenu):
 			match, params = True, OrderedDict()
 			for t, k, v in checks:
 				if t == 'match':
-					if match and not v.search(item.obj.proplist.get(k, '')): match = False
+					if match and not v.search(item.obj.proplist.get(k) or ''): match = False
 				elif t == 'set': params[k] = v
 				else: raise ValueError((t, k, v))
 			if match:
