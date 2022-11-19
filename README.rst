@@ -8,38 +8,43 @@
 .. contents::
   :backlinks: none
 
+Repository URLs:
+
+- https://github.com/mk-fg/pulseaudio-mixer-cli
+- https://codeberg.org/mk-fg/pulseaudio-mixer-cli
+- https://fraggod.net/code/git/pulseaudio-mixer-cli
+
 
 
 Description
 -----------
 
-Kinda like alsamixer, focused not on sink volume levels (which can actually be
+Kinda like alsamixer, focused not on sink volume levels (which can be also
 controlled via alsamixer, with alsa-pulse plugin), but rather on volume of
-individual streams, so you can tune down the music to hear the stuff from games,
-mumble, skype or browser.
+individual streams, so you can tune down the music to hear notifications,
+games, chats, browser or other media over each other.
+Both current and stored volume levels can be adjusted.
 
 In addition to interactive UI, script allows to match and configure sink/stream
 parameters via config file, so that when specific sink or stream appears,
 e.g. its volume can be capped, port changed, UI title adjusted, hidden - stuff
-like that.
-
-Easy control over audio streams that pulseaudio provides seem to be almost
-unique to it, pity there aren't many tools built to harness it (at least
-weren't, initially). This one tries to fill the gap a bit.
+like that - which is useful to override pulse's "stream_restore" values to avoid
+blowing your ears out when starting media player with stored 100% volume from
+some earlier adjustment.
 
 
 How it looks
 ````````````
 
-...in a rather narrow terminal (to fit well on a github page), and without
+...in a rather narrow terminal (to fit well on html page), and without
 "inverted row" selection visible::
 
   [++] Jack sink (PulseAudio JACK Sink)                  M [ ########################## ]
   [++] HDMI 0 (hdmi-stereo@snd_hda_intel)                M [ ########################## ]
   [81] ID 440 Analog (analog-stereo@snd_hda_intel)       - [ #####################----- ]
   [35] mpv - Bax - Perceptions 206 on ETN.fm Jan-22-2015 - [ #########----------------- ]
-  [38] VLC media player (fraggod@malediction:24321)      - [ ##########---------------- ]
-  [54] Skype (fraggod@malediction:24202)                 - [ ##############------------ ]
+  [38] VLC media player                                  - [ ##########---------------- ]
+  [54] Skype                                             - [ ##############------------ ]
   [27] ALSA plug-in [PillarsOfEternity]                  - [ #######------------------- ]
 
 Sink levels always sorted/displayed on top, "M" or "-" to the left of the bar is
@@ -50,10 +55,10 @@ Stuff that's rarely or never used (e.g. Jack/HDMI sink levels) can be hidden (se
 There's also a separate list of module-stream-restore volumes, accessible via "x" key.
 
 
-Features (pa-mixer-mk3.py)
-``````````````````````````
+Features
+````````
 
-- Terminal app, very simple ascii tui, basic controls, output volumes and mute only.
+- Terminal app, very simple ascii TUI, basic controls, output volumes and mute only.
 
 - Listens and reacts to events from pulse, i.e. any stream/volume changes on the
   server will be reflected in the UI immediately.
@@ -77,26 +82,25 @@ Features (pa-mixer-mk3.py)
 - Extensive debug logging, if enabled.
 
 
-Limitations (pa-mixer-mk3.py)
-`````````````````````````````
+Limitations
+```````````
 
-- Very basic and dull UI, no colors, fancy unicode or anything.
+- Very basic and dull UI, no colors, fancy unicode or anything like that.
 
-- Only volumes for sinks and sink-inputs are displayed/controllable via UI - no
-  sources, source-inputs, cards, modules, equalizers, etc.
+- Only volumes for sinks and sink-inputs are displayed/controllable via UI -
+  no sources, source-inputs, cards, modules, equalizers, etc.
 
-- No control over per-channel volume levels, always sets same level for all
-  channels.
+- No control over per-channel volume levels, always sets same level for all channels.
 
 - Flat menu - doesn't reflect relations between sink-inputs and sinks they
   belong to, not very suitable for multi-sink setups.
 
-- No options/controls to migrate streams between sinks/sources, kill/suspend
-  stuff, or any pactl-like actions like that.
+- No options/controls to migrate streams between sinks/sources, kill/suspend stuff,
+  or any pactl-like actions like that.
 
-- Interactive mode only, no "oneshot" operation.
+- Interactive/automation mode only, no "oneshot" operation.
 
-- Not a self-contained script, depends on extra py module.
+- Not a self-contained script, depends on extra python module.
 
 See links section below for some of the good alternatives.
 
@@ -105,42 +109,19 @@ See links section below for some of the good alternatives.
 Installation
 ------------
 
-Copy one of the scripts (`pa-mixer-mk3.py`_ is the latest one) to wherever is
-convenient (~/bin or /usr/local/bin comes to mind), do a ``chmod +x`` on it, run.
+pulsectl_ python module must be installed in order for this script to work
+first, which can be done either via OS packaging system, or ``pip install pulsectl``.
+See also instructions in `pulsectl repository`_ for other install options.
 
-There are three scripts:
+After that, copy `pa-mixer.py`_ to wherever is convenient (``~/bin`` or
+``/usr/local/bin`` comes to mind), do a ``chmod +x`` on it, run it.
 
-- `pulseaudio-mixer-cli.py`_ - initial version, uses semi-isolated dbus
-  subprocess, Python-2.7 only.
+Older python2/dbus versions of the tool can be found in the git repository
+history, but shouldn't be relevant by now.
 
-- `pa-mixer-mk2.py`_ - rewrite, with separate dbus/glib subprocess and more
-  features, also Python-2.7.
-
-- `pa-mixer-mk3.py`_ - same as mk2, but for Python-3.x and uses pulsectl_ module
-  (libpulse wrapper) to communicate with pulseaudio daemon (from a thread)
-  instead of dbus.
-
-Only latest script is updated. Older ones are left in the repo just in case.
-
-If `pa-mixer-mk3.py`_ (latest) script version will be used, pulsectl_ python
-module must be installed (either via OS packaging system, or e.g. ``pip
-install --user pulsectl``).
-
-| If using older scripts with dbus interface, make sure dbus-python package is installed.
-| module-dbus-protocol will be loaded automatically there, if necessary.
-| Thse use dbus only and don't need pulsectl module, unlike mk3 version.
-
-Requirements (pa-mixer-mk3.py)
-``````````````````````````````
-
-- Python 3.x
-- pulsectl_ python module
-- PulseAudio 1.0+
-
-.. _pulseaudio-mixer-cli.py: pulseaudio-mixer-cli.py
-.. _pa-mixer-mk2.py: pa-mixer-mk2.py
-.. _pa-mixer-mk3.py: pa-mixer-mk3.py
-.. _pulsectl: https://github.com/mk-fg/python-pulse-control
+.. _pulsectl: https://pypi.org/project/pulsectl/
+.. _pulsectl repository: https://github.com/mk-fg/python-pulse-control
+.. _pa-mixer.py: pa-mixer.py
 
 
 
@@ -198,11 +179,9 @@ Supposed to mimic controls in alsamixer and be somewhat intuitive, hardcoded.
 Config file
 ```````````
 
-Script can read simple ini-like config from "~/.pulseauido-mixer-cli.cfg"
-(or whatever is specified via --conf option).
-
-See `RawConfigParser docs <http://docs.python.org/2/library/configparser.html>`_
-for more details on format of that file.
+Script can read simple ini-like config from ``~/.pa-mixer.cfg`` or
+``~/.pulseauido-mixer-cli.cfg`` (or whatever is specified via --conf option),
+with "key = value" or "key: value" lines under section names in square brackets.
 
 For example::
 
@@ -214,36 +193,41 @@ For example::
   focus-new-items: no
   show-controls: no
 
-Such config is totally optional, and might be useful in case default options
-aren't suitable for a specific setup.
-See `pa-mixer.example.cfg`_ for the full list of these.
+Such config is optional, and useful in case default options aren't suitable for
+a specific setup or to match streams and automate some changes.
+See `pa-mixer.example.cfg`_ for full list of options in that file and an extended example.
 
-Commandline values (where available) override the ones defined in the config file.
+Command-line values (where available) override ones defined in the file.
 
-Config can also contain sections for applying stuff (hide, volume min/max/set,
-sink ports, and such) to individual sinks/streams, for example::
+Config can also contain sections for changing stream parameters for individual
+sinks/streams automatically (e.g. hide, volume min/max/set, sink ports, and such),
+for example::
 
   [stream-sink-hdmi]
   match[alsa.id]: ^HDMI\b
   hidden: yes
 
   [stream-firefox-media]
-  equals[application.name]: CubebUtils
+  equals[application.name]: Firefox
   name: firefox
   volume-max: 0.2
 
-This will hide any HDMI sinks, matching their "alsa.id" parameter by regexp,
+This example will hide HDMI sinks, matching their "alsa.id" parameter by regexp,
 match sound from firefox by "application.name" and set more descriptive name
 there, as well as cap initial volume level for these at "0.2" (lower to this
 value if it is set higher initially).
 
 Pressing "i" key will show all parameters (pulse proplist) for selected item.
 
-Running ``./pa-mixer-mk3.py --dump-stream-parameters 2>stream_params.txt`` will
-dump such parameters for all seen streams to "stream_params.txt", so that it'd
-be easy to choose how to match these, and will catch any transient streams.
+Running ``./pa-mixer.py --dump-stream-parameters 2>stream_params.txt`` can
+also be used to dump such parameters for all streams to "stream_params.txt",
+to inspect and choose how to match these, and will catch any transient streams.
 
-See more info on stream matching and parameters in `pa-mixer.example.cfg`_.
+See more info on stream matching and parameters in `pa-mixer.example.cfg`_
+and comments there.
+
+.. _pa-mixer.example.cfg: pa-mixer.example.cfg
+
 
 
 Misc hints
@@ -256,22 +240,11 @@ Misc hints
 - To set volume for very transient sounds (e.g. notification "blips") that are
   too quick to disappear or adjust them in any way, there are two options:
 
-  - If module-stream-restore is loaded (usually is by default), use "x" key to
+  - If module-stream-restore is loaded (should be by default), use "x" key to
     adjust all volumes that are stored there.
 
   - ``--dump-stream-parameters`` option and volume setting through config file
     can be used (see "Config file" section above for details).
-
-- Clients/apps that change their volume can be forced to have fixed volume level
-  or min/max thresholds by using "volume-..." settings and "reapply: true" (to
-  enforce these on every volume-change event).
-
-- ``/etc/pulse/daemon.conf`` has important "flat-volumes" option that controls
-  whether to use same scale for all volume bars ("yes") or apply them on top of
-  each other ("no"), which usually has distro-specific default value.
-
-  That option is the reason why sink volume might be increased automatically
-  when adjusting level for specific stream/app.
 
 - Stream id under which pulseaudio module-stream-restore saves volume can be
   easily controlled by using e.g. ``env PULSE_PROP_media.role=music mpv ...``,
@@ -282,28 +255,40 @@ Misc hints
   inherently different volume levels/requirements (e.g. same mpv/vlc/etc for
   music, podcasts and movies).
 
-- To have more precise control over lower end of specified volume range without
-  having to limit the range itself, "volume-type = log" option (base=e
-  logarithmic scale) can be used , with higher-base values ("log-N") giving even
-  more control there.
+- Clients/apps that change their volume can be forced to have fixed volume level
+  or min/max thresholds by using "volume-..." settings and ``reapply: true``,
+  to enforce these again on every volume-change event.
 
-  | With e.g. "volume-type = log-15", 50% volume will be at ``[ ############--- ]``.
+- ``/etc/pulse/daemon.conf`` has important "flat-volumes" option that controls
+  whether to use same scale for all volume bars ("yes") or apply them on top of
+  each other ("no"), which usually has distro-specific default value.
+
+  That option is the reason why sink volume might be increased automatically
+  when adjusting level for specific stream/app.
+
+- To have more precise control over lower end of specified volume range without
+  having to limit the range itself, ``volume-type = log`` option
+  (base=e logarithmic scale) can be used, with higher-base values ("log-N")
+  giving even more control there.
+
+  | With e.g. ``volume-type = log-15``, 50% volume will be at ``[ ############--- ]``
   | See `pa-mixer.example.cfg`_ for more details.
 
-- "volume-after-max = yes" can be used to allow effectively infinite volume range,
-  if source is occasionally way too low for any reasonable min/max settings.
+- ``volume-after-max = yes`` can be used to allow effectively infinite volume range,
+  if source is occasionally way too low for any reasonable min/max settings
+  and has to be boosted like that.
 
 
 
 Debugging errors
 ----------------
 
-Run ``./pa-mixer-mk3.py --debug --fatal 2>pa-mixer.log`` until whatever werid
+Run ``./pa-mixer.py --debug --fatal 2>pa-mixer.log`` until whatever werid
 bug happens, then look into produced "pa-mixer.log".
 
-"--fatal" can probably be omitted in most cases, main point there is a "--debug"
+"--fatal" can probably be omitted in most cases, main thing there is a "--debug"
 option, enabling output to stderr and then redirecting that to a file, so that
-it won't mess up the ui (as terminals show both stdout and stderr interleaved).
+it won't mess up the UI (as terminals show both stdout and stderr interleaved).
 
 
 
@@ -315,18 +300,12 @@ Other similar projects
   Similar Python-3-based pulse mixer with way more colorful UI, individual
   channel volumes, source volume and port control, and without any extra deps.
 
-- `pamixer <https://github.com/valodim/pamixer>`_
+- `ponymix <https://github.com/falconindy/ponymix>`_ - nice C++ non-interactive control tool.
 
-  Seem to be abandoned since the time of pulseaudio-0.9.22 release (5+ years ago).
+- `pavucontrol <https://freedesktop.org/software/pulseaudio/pavucontrol/>`_ -
+  good GUI (for GNOME/X11/Wayland desktops) that usually comes with pulseaudio itself.
 
-- `ponymix <https://github.com/falconindy/ponymix>`_
-
-  Nice C++ non-interactive control tool.
-
-- pavucontrol that comes with pulse has good GUI (for GNOME/X11 and such).
+- `pamixer <https://github.com/valodim/pamixer>`_ -
+  seem to be abandoned since the time of pulseaudio-0.9.22 (years ago).
 
 Not an exhaustive list by any means.
-
-
-
-.. _pa-mixer.example.cfg: pa-mixer.example.cfg

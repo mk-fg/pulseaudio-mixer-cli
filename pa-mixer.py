@@ -105,13 +105,14 @@ def conf_read(path=None, base=None, **overrides):
 	except (OSError, IOError) as err: pass
 	else: conf_update_from_file(conf, conf_file, overrides)
 	return conf
-conf_read.path_default = '~/.pulseaudio-mixer-cli.cfg'
+conf_read.path_default = '~/.pa-mixer.cfg'
+conf_read.path_legacy = '~/.pulseaudio-mixer-cli.cfg'
 
 def conf_update_from_file(conf, path_or_file, overrides):
 	if isinstance(path_or_file, str): path_or_file = open(path_or_file)
 	with path_or_file as src:
-		config = configparser.RawConfigParser(
-			allow_no_value=True, inline_comment_prefixes=(';',) )
+		config = configparser.ConfigParser(
+			interpolation=None, allow_no_value=True, inline_comment_prefixes=(';',) )
 		try: config.read_file(src)
 		except configparser.MissingSectionHeaderError:
 			src.seek(0)
@@ -984,10 +985,11 @@ def main(args=None):
 	parser = argparse.ArgumentParser(description='Command-line PulseAudio mixer tool.')
 
 	group = parser.add_argument_group('Configuration file')
-	group.add_argument('-c', '--conf',
-		action='store', metavar='path', default=conf_read.path_default,
-		help='Path to configuration file to use instead'
-			' of the default one (%(default)s), can be missing or empty.')
+	group.add_argument('-c', '--conf', action='store', metavar='path',
+		help=( 'Path to configuration file to use instead of the default paths,'
+					' which are {} and {} (legacy one), if this option is not used.'
+				' Config paths can be missing or empty to use all default settings.'
+			).format(conf_read.path_default, conf_read.path_legacy))
 
 	group = parser.add_argument_group('Configuration overrides')
 	group.add_argument('-a', '--adjust-step',
@@ -1037,6 +1039,9 @@ def main(args=None):
 		return print(f'{func_label} (type={vt}): {val:.2f} -> {func(val):.2f}')
 
 	if opts.conf: conf = conf_read(opts.conf)
+	else:
+		for p in conf_read.path_default, conf_read.path_legacy:
+			conf = conf_read(p, base=conf)
 	for k,v in vars(opts).items(): setattr(conf, k, v)
 	del opts
 
@@ -1049,7 +1054,7 @@ def main(args=None):
 	log.debug('Initializing...')
 
 	while True:
-		with Pulse('pa-mixer-mk3', connect=False, threading_lock=True) as pulse:
+		with Pulse('pa-mixer', connect=False, threading_lock=True) as pulse:
 			pulse.connect(wait=conf.reconnect)
 
 			attic, streams = None, PAMixerStreams(pulse, conf, fatal=conf.fatal)
@@ -1075,7 +1080,6 @@ def main(args=None):
 							log.debug('Disconnected from pulse server, exiting...')
 							break
 					else: break
-					# else: break
 
 	log.debug('Finished')
 
