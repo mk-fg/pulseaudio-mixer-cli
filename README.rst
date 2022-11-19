@@ -58,7 +58,8 @@ There's also a separate list of module-stream-restore volumes, accessible via "x
 Features
 ````````
 
-- Terminal app, very simple ascii TUI, basic controls, output volumes and mute only.
+- Terminal app, very simple ascii TUI, basic controls,
+  output volumes and mute only.
 
 - Listens and reacts to events from pulse, i.e. any stream/volume changes on the
   server will be reflected in the UI immediately.
@@ -95,8 +96,8 @@ Limitations
 - Flat menu - doesn't reflect relations between sink-inputs and sinks they
   belong to, not very suitable for multi-sink setups.
 
-- No options/controls to migrate streams between sinks/sources, kill/suspend stuff,
-  or any pactl-like actions like that.
+- No options/controls to migrate streams between sinks/sources,
+  kill/suspend stuff, or any pactl-like actions like that.
 
 - Interactive/automation mode only, no "oneshot" operation.
 
@@ -109,8 +110,9 @@ See links section below for some of the good alternatives.
 Installation
 ------------
 
-pulsectl_ python module must be installed in order for this script to work
-first, which can be done either via OS packaging system, or ``pip install pulsectl``.
+pulsectl_ python module must be installed in order for this script
+to work first, which can be done either via OS packaging system,
+or ``pip install pulsectl``.
 See also instructions in `pulsectl repository`_ for other install options.
 
 After that, copy `pa-mixer.py`_ to wherever is convenient (``~/bin`` or
@@ -137,8 +139,8 @@ Controls
 
 Keyboard controls are:
 
-- Arrow keys (including numpad) or their vi/emacs-style counterparts to pick row
-  and adjust bars left and right.
+- Arrow keys (including numpad) or their vi/emacs-style counterparts
+  to pick row and adjust bars left and right.
 
   Vi keys: "k" - up, "j" - down, "h" - left, "l" - right.
 
@@ -155,13 +157,13 @@ Keyboard controls are:
 
 - "q" to quit.
 
-- "x" to toggle display between current sink/stream volumes and ones in
-  module-stream-restore db (if used/accessible).
+- "x" to toggle display between current sink/stream volumes
+  and ones in module-stream-restore db (if used/accessible).
 
 - Current volumes tab only:
 
-  - "i" to show proplist for the selected item, i.e. stuff that can be used to
-    match it via config file.
+  - "i" to show proplist for the selected item,
+    i.e. stuff that can be used to match it via config file.
 
 - module-stream-restore tab only:
 
@@ -300,10 +302,11 @@ Other similar projects
   Similar Python-3-based pulse mixer with way more colorful UI, individual
   channel volumes, source volume and port control, and without any extra deps.
 
-- `ponymix <https://github.com/falconindy/ponymix>`_ - nice C++ non-interactive control tool.
+- `ponymix <https://github.com/falconindy/ponymix>`_ -
+  nice C++ non-interactive control tool.
 
 - `pavucontrol <https://freedesktop.org/software/pulseaudio/pavucontrol/>`_ -
-  good GUI (for GNOME/X11/Wayland desktops) that usually comes with pulseaudio itself.
+  good GUI mixer for X11/Wayland desktops that usually comes with pulseaudio itself.
 
 - `pamixer <https://github.com/valodim/pamixer>`_ -
   seem to be abandoned since the time of pulseaudio-0.9.22 (years ago).
