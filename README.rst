@@ -177,7 +177,6 @@ shown at the bottom line, unless disabled via config ("show-controls" option).
 Supposed to mimic controls in alsamixer and be somewhat intuitive, hardcoded.
 
 
-
 Config file
 ```````````
 
@@ -229,7 +228,6 @@ See more info on stream matching and parameters in `pa-mixer.example.cfg`_
 and comments there.
 
 .. _pa-mixer.example.cfg: pa-mixer.example.cfg
-
 
 
 Misc hints

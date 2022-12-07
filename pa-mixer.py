@@ -993,11 +993,10 @@ def main(args=None):
 
 	group = parser.add_argument_group('Configuration overrides')
 	group.add_argument('-a', '--adjust-step',
-		type=int, metavar='step', default=conf.adjust_step,
-		help='Adjustment for a single keypress in interactive mode (0-100%%, default: %(default)s%%).')
-	group.add_argument('-l', '--max-level',
-		type=float, metavar='volume', default=conf.max_volume,
-		help='Relative volume level to treat as max (default: %(default)s).')
+		type=int, metavar='step', help='Adjustment for a single keypress'
+			f' in interactive mode (0-100%%, default: {conf.adjust_step}%%).')
+	group.add_argument('-l', '--max-level', type=float, metavar='volume',
+		help=f'Relative volume level to treat as max (default: {conf.max_volume}).')
 	group.add_argument('-n', '--use-media-name',
 		action='store_true', default=conf.use_media_name,
 		help='Display streams by "media.name" property, if possible.'
@@ -1014,8 +1013,7 @@ def main(args=None):
 		help='Print value converted from log-scale (with specified base or e) to flat and exit.')
 
 	group = parser.add_argument_group('Misc/debug')
-	group.add_argument('-v', '--verbose',
-		action='store_true', default=conf.verbose,
+	group.add_argument('-v', '--verbose', action='store_true',
 		help='Dont close stderr to see any sort of errors (which'
 			' mess up curses interface, thus silenced that way by default).')
 	group.add_argument('--dump-stream-params',
@@ -1042,8 +1040,8 @@ def main(args=None):
 	else:
 		for p in conf_read.path_default, conf_read.path_legacy:
 			conf = conf_read(p, base=conf)
-	for k,v in vars(opts).items(): setattr(conf, k, v)
-	del opts
+	for k,v in vars(opts).items():
+		if v is not None: setattr(conf, k, v)
 
 	logging.basicConfig(
 		level=logging.DEBUG if conf.debug else logging.WARNING,
