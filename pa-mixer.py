@@ -997,8 +997,7 @@ def main(args=None):
 			f' in interactive mode (0-100%%, default: {conf.adjust_step}%%).')
 	group.add_argument('-l', '--max-level', type=float, metavar='volume',
 		help=f'Relative volume level to treat as max (default: {conf.max_volume}).')
-	group.add_argument('-n', '--use-media-name',
-		action='store_true', default=conf.use_media_name,
+	group.add_argument('-n', '--use-media-name', action='store_true', default=None,
 		help='Display streams by "media.name" property, if possible.'
 			' Default is to prefer application name and process properties.')
 	group.add_argument('--no-reconnect',
