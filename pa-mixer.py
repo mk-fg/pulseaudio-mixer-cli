@@ -582,6 +582,9 @@ class PAMixerStreams(PAMixerMenu):
 							log.error( 'Unable to set port for stream {!r}'
 								' (name: {!r}, config section: {}): {}', item, item.name, sec, err )
 					elif k == 'name': item.name_update(v)
+					elif k == 'muted': item.muted = self.conf.parse_bool(v)
+					elif k == 'muted-if-file':
+						item.muted = os.path.exists(os.path.expanduser(os.path.expandvars(v)))
 					elif k == 'reapply': pass
 					else:
 						log.debug( 'Unrecognized stream'
