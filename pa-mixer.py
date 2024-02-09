@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-from collections import OrderedDict, defaultdict, deque, namedtuple
-from contextlib import contextmanager
+import collections as cs, contextlib as cl
 import os, sys, io, re, time, logging, configparser
 import base64, hashlib, unicodedata, math
 import signal, threading
@@ -146,7 +145,7 @@ def conf_update_from_file(conf, path_or_file, overrides):
 		conf._vol_type_get = lambda v,b=vol_log_base: conf._vol_cap(math.log(v * (b - 1) + 1, b))
 		conf._vol_type_set = lambda v,b=vol_log_base: (b ** conf._vol_cap(v) - 1) / (b - 1)
 
-	conf.stream_params = OrderedDict(conf.stream_params or dict())
+	conf.stream_params = dict(conf.stream_params or dict())
 	conf.stream_params_reapply = list() # ones to re-apply on every event
 	for sec in config.sections():
 		if not re.search(r'^stream\b.', sec): continue
@@ -181,7 +180,7 @@ class PAMixerMenuItem:
 class PAMixerMenu:
 
 	focus_policies = dict(first=op.itemgetter(0), last=op.itemgetter(-1))
-	items, controls, conf = tuple(), OrderedDict(), Conf()
+	items, controls, conf = tuple(), dict(), Conf()
 
 	def update(self, incremental=False): return
 
@@ -247,7 +246,7 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 
 		if self.conf.dump_stream_params:
 			from pprint import pprint
-			dump = OrderedDict(uid=self.uid, name=self.name)
+			dump = dict(uid=self.uid, name=self.name)
 			dump['props'] = sorted(self.obj.proplist.items())
 			pprint(dump, sys.stderr)
 			sys.stderr.flush()
@@ -368,8 +367,8 @@ class PAMixerStreams(PAMixerMenu):
 
 	def __init__(self, pulse, conf=None, fatal=False):
 		self.pulse, self.fatal, self.conf = pulse, fatal, conf or Conf()
-		self.items, self.item_objs = list(), OrderedDict()
-		self.connected, self._updates = None, deque()
+		self.items, self.item_objs = list(), dict()
+		self.connected, self._updates = None, cs.deque()
 		self._pulse_hold, self._pulse_lock = threading.Lock(), threading.Lock()
 
 	def update(self, incremental=False):
@@ -426,7 +425,7 @@ class PAMixerStreams(PAMixerMenu):
 				for obj_id, item in it.chain(sinks, streams): self.item_objs[obj_id] = item
 
 			# Make item names unique
-			items_uniq = defaultdict(list)
+			items_uniq = cs.defaultdict(list)
 			for item in self.item_objs.values(): items_uniq[item.name_base].append(item)
 			for items in items_uniq.values():
 				if len(items) <= 1: continue
@@ -438,7 +437,7 @@ class PAMixerStreams(PAMixerMenu):
 			if not self._updates: break
 
 	_update_wakeup_break = None
-	@contextmanager
+	@cl.contextmanager
 	def update_wakeup_poller(self, wakeup_handler):
 		'''Context that runs `wakeup_handler` for pulse sink/sink-input events.
 			Implemented via pulse-event-listener daemon
@@ -446,13 +445,14 @@ class PAMixerStreams(PAMixerMenu):
 			`conf.event_proc_delay` and timer signals (instead of os.kill) are to avoid
 				calling handler for very transient sink-inputs (e.g. many few-ms click sounds).'''
 		wakeup_pid, wakeup_sig = os.getpid(), signal.SIGALRM
-		ev_queue, ev_timer_delay, ev_timer_set = deque(), self.conf.event_proc_delay or 0, False
+		ev_queue, ev_timer_delay, ev_timer_set = (
+			cs.deque(), self.conf.event_proc_delay or 0, False )
 
 		def ev_queue_cleanup(ev_queue):
 			'''Discard/dedup new-change-remove event sequences for same object(s).
 				This is optimization for transient sink-inputs,
 					which are shorter than `conf.event_proc_delay` and multiple changes.'''
-			ev_buff = OrderedDict()
+			ev_buff = dict()
 			while ev_queue:
 				try: ev = ev_queue.popleft()
 				except IndexError: break
@@ -526,7 +526,7 @@ class PAMixerStreams(PAMixerMenu):
 			# if t.is_alive(): t.join()
 			# time.sleep(0.5)
 
-	@contextmanager
+	@cl.contextmanager
 	def update_wakeup(self, trap_errors=True, loop_interval=0.03):
 		'Anything pulse-related MUST be done in this context.'
 		with self._pulse_hold:
@@ -557,7 +557,7 @@ class PAMixerStreams(PAMixerMenu):
 		rulesets = (self.conf.stream_params or dict()).items() if not reapply else\
 			((k, self.conf.stream_params[k]) for k in self.conf.stream_params_reapply)
 		for sec, checks in rulesets:
-			match, params = True, OrderedDict()
+			match, params = True, dict()
 			for t, k, v in checks:
 				if t == 'match':
 					if match and not v.search(item.obj.proplist.get(k) or ''): match = False
@@ -669,8 +669,8 @@ class PAMixerAttic(PAMixerMenu):
 		for sr in sr_list:
 			if sr.name.startswith('source-output-by-'): continue
 			items.append(PAMixerAtticItem(self, sr))
-		self.item_dict = OrderedDict(
-			(item.name, item) for item in sorted(items, key=op.attrgetter('name')) )
+		self.item_dict = dict( (item.name, item)
+			for item in sorted(items, key=op.attrgetter('name')) )
 
 	@property
 	def items(self):
@@ -700,7 +700,7 @@ class PAMixerStreamInfo(PAMixerMenu):
 
 
 
-PAMixerUIFit = namedtuple('PAMixerUIFit', 'rows controls')
+PAMixerUIFit = cs.namedtuple('PAMixerUIFit', 'rows controls')
 
 class PAMixerUI:
 
@@ -921,7 +921,7 @@ class PAMixerUI:
 				item_hl = self.item_hl = self.menu.item_default(item_hl_n.get(self.mode))
 				if item_hl: item_hl_n[self.mode] = items.index(item_hl)
 
-			controls = OrderedDict()
+			controls = dict()
 			if self.conf.show_controls:
 				if self.attic:
 					controls['x'] = 'show {}'.format(
