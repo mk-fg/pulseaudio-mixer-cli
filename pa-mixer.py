@@ -49,7 +49,7 @@ class Conf:
 	use_device_name = False
 	use_media_name = False
 	placeholder_media_names = [ # avoid displaying these, as they're not informative
-		'audio stream', 'audio stream #1', 'AudioStream', 'Output', 'Playback',
+		re.compile('audio stream( #\d+)?'), 'AudioStream', 'Output', 'Playback',
 		'Playback Stream', 'ALSA Playback', 'Simple DirectMedia Layer' ]
 	name_len_max = 100
 	name_cut_from = 'left' # "left" or "right"
@@ -280,7 +280,10 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 		if self.t == 'stream':
 			if self.conf.use_media_name:
 				name = props.get('media.name')
-				if name and name not in self.conf.placeholder_media_names: return name
+				if name not in self.conf.placeholder_media_names:
+					for rx in self.conf.placeholder_media_names:
+						if not isinstance(rx, str) and rx.fullmatch(name): break
+					else: return name
 			try: name = props['application.name']
 			except KeyError: name = props['media.name'] # some synthetic stream with non-descriptive name
 			ext = '({application.process.user}@'\
@@ -407,11 +410,15 @@ class PAMixerStreams(PAMixerMenu):
 
 			for obj_id in obj_gone: self.item_objs.pop(obj_id, None)
 			for obj_id, item in self.item_objs.items():
-				try: self.apply_stream_params(item, reapply=obj_id not in obj_new)
+				item_new = obj_id in obj_new
+				try: self.apply_stream_params(item, reapply=not item_new)
 				except Exception as err:
 					log.exception(
 						'Failed to apply stream parameters for {}, skipping: <{}> {}',
 						item, err.__class__.__name__, err )
+				if item_new:
+					log.debug( 'New stream [{0.uid}]: {0.name} [type={0.t} hidden={0.hidden}'
+							' name-set={0.name_custom} volume={1}%]', item, int(item.volume * 100) )
 
 			# Sort sinks to be always on top
 			sinks, streams, ordered = list(), list(), True
