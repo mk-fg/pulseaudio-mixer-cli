@@ -49,7 +49,7 @@ class Conf:
 	use_device_name = False
 	use_media_name = False
 	placeholder_media_names = [ # avoid displaying these, as they're not informative
-		re.compile('audio stream( #\d+)?'), 'AudioStream', 'Output', 'Playback',
+		re.compile(r'audio stream( #\d+)?'), 'AudioStream', 'Output', 'Playback',
 		'Playback Stream', 'ALSA Playback', 'Simple DirectMedia Layer' ]
 	name_len_max = 100
 	name_cut_from = 'left' # "left" or "right"
