@@ -49,7 +49,7 @@ class Conf:
 	use_device_name = False
 	use_media_name = False
 	placeholder_media_names = [ # avoid displaying these, as they're not informative
-		re.compile(r'(?i)audio stream( #\d+)?'), 'AudioStream', 'Output', 'Playback',
+		re.compile(r'(?i)audio ?stream( #\d+)?'), 'Output', 'Playback',
 		'Playback Stream', 'ALSA Playback', 'Simple DirectMedia Layer', 'SDL Application' ]
 	name_len_max = 100
 	name_cut_from = 'left' # "left" or "right"
@@ -286,8 +286,8 @@ class PAMixerStreamsItem(PAMixerMenuItem):
 					else: return name
 			try: name = props['application.name']
 			except KeyError: name = props['media.name'] # some synthetic stream with non-descriptive name
-			ext = '({application.process.user}@'\
-				'{application.process.host}:{application.process.id})'
+			ext = ( '({application.process.binary} '
+				'{application.process.user}@{application.process.host}:{application.process.id})' )
 
 		elif self.t == 'sink':
 			if self.conf.use_device_name: name = self.obj.name
