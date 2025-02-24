@@ -50,7 +50,7 @@ class Conf:
 	use_media_name = False
 	placeholder_media_names = [ # avoid displaying these, as they're not informative
 		re.compile(r'(?i)audio stream( #\d+)?'), 'AudioStream', 'Output', 'Playback',
-		'Playback Stream', 'ALSA Playback', 'Simple DirectMedia Layer' ]
+		'Playback Stream', 'ALSA Playback', 'Simple DirectMedia Layer', 'SDL Application' ]
 	name_len_max = 100
 	name_cut_from = 'left' # "left" or "right"
 	name_show_level = True
